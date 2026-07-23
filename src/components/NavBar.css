@@ -171,13 +171,41 @@
 .app-nav-display-menu {
   position: absolute; top: calc(100% + 6px); left: 0;
   min-width: 240px;
+  max-height: 380px;
   background: #fff;
   border: 1px solid #e2e8f0;
   border-radius: 14px;
   box-shadow: 0 10px 36px rgba(13,71,161,0.14);
   z-index: 9999; overflow: hidden;
+  display: flex; flex-direction: column;
   animation: navDropIn 0.13s ease; transform-origin: top left;
 }
+.app-nav-display-search-wrap {
+  display: flex; align-items: center; gap: 6px;
+  padding: 8px 14px; border-bottom: 1px solid #f0f4f8;
+  flex-shrink: 0; background: #fff;
+}
+.app-nav-display-search-icon { color: #90A4AE; flex-shrink: 0; }
+.app-nav-display-search-input {
+  flex: 1; border: none; outline: none;
+  font-family: inherit; font-size: 13px; color: #1E3A5F;
+  background: transparent;
+}
+.app-nav-display-search-input::placeholder { color: #BDBDBD; }
+.app-nav-display-search-clear {
+  width: 18px; height: 18px; border: none; border-radius: 50%;
+  background: #E0E0E0; color: #616161; font-size: 10px;
+  cursor: pointer; display: flex; align-items: center; justify-content: center;
+  flex-shrink: 0; transition: background 0.15s;
+}
+.app-nav-display-search-clear:hover { background: #BDBDBD; }
+.app-nav-display-list-scroll {
+  overflow-y: auto;
+  max-height: 260px;
+  flex-shrink: 1;
+}
+.app-nav-display-list-scroll::-webkit-scrollbar { width: 4px; }
+.app-nav-display-list-scroll::-webkit-scrollbar-thumb { background: rgba(13,71,161,0.2); border-radius: 4px; }
 @keyframes navDropIn {
   from { opacity: 0; transform: translateY(-6px) scale(0.97); }
   to   { opacity: 1; transform: translateY(0) scale(1); }
@@ -244,15 +272,24 @@
   top: calc(100% + 8px);
   left: 0;
   width: 380px;
+  max-height: 420px;
   background: #fff;
   border: 1px solid #e2e8f0;
   border-radius: 14px;
   box-shadow: 0 8px 32px rgba(0,0,0,0.14);
   z-index: 9999;
   overflow: hidden;
+  display: flex; flex-direction: column;
   animation: scaleIn 0.15s ease;
   transform-origin: top left;
 }
+.app-nav-copylink-list-scroll {
+  overflow-y: auto;
+  flex: 1;
+  min-height: 0;
+}
+.app-nav-copylink-list-scroll::-webkit-scrollbar { width: 4px; }
+.app-nav-copylink-list-scroll::-webkit-scrollbar-thumb { background: rgba(13,71,161,0.2); border-radius: 4px; }
 .app-nav-copylink-header {
   padding: 12px 16px 10px;
   font-size: 12px;

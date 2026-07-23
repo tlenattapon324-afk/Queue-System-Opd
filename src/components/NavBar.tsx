@@ -33,6 +33,11 @@ const STATIC_PAGES = [
   { label: 'ประวัติการเรียกคิว', path: '/#/queue-history', icon: '📋' },
 ]
 
+function displaySearchFilter(configs: DisplayConfigItem[], search: string): DisplayConfigItem[] {
+  const q = search.trim().toLowerCase()
+  return q ? configs.filter(c => c.name.toLowerCase().includes(q)) : configs
+}
+
 export default function NavBar() {
   const navigate = useNavigate()
   const location = useLocation()
@@ -41,8 +46,12 @@ export default function NavBar() {
   const [showDisplayNav, setShowDisplayNav] = useState(false)
   const [copiedKey, setCopiedKey] = useState<string | null>(null)
   const [savedKey, setSavedKey] = useState<string | null>(null)
+  const [displayNavSearch, setDisplayNavSearch] = useState('')
+  const [linkSearch, setLinkSearch] = useState('')
   const linkRef = useRef<HTMLDivElement>(null)
   const displayNavRef = useRef<HTMLDivElement>(null)
+  const displayNavSearchRef = useRef<HTMLInputElement>(null)
+  const linkSearchRef = useRef<HTMLInputElement>(null)
   const [serverOrigin, setServerOrigin] = useState(window.location.origin)
   const [displayConfigs, setDisplayConfigs] = useState<DisplayConfigItem[]>([])
 
@@ -64,7 +73,12 @@ export default function NavBar() {
       if (displayNavRef.current && !displayNavRef.current.contains(e.target as Node))
         setShowDisplayNav(false)
     }
-    if (showDisplayNav) document.addEventListener('mousedown', handler)
+    if (showDisplayNav) {
+      document.addEventListener('mousedown', handler)
+      setTimeout(() => displayNavSearchRef.current?.focus(), 60)
+    } else {
+      setDisplayNavSearch('')
+    }
     return () => document.removeEventListener('mousedown', handler)
   }, [showDisplayNav])
 
@@ -73,7 +87,12 @@ export default function NavBar() {
       if (linkRef.current && !linkRef.current.contains(e.target as Node))
         setShowLinks(false)
     }
-    if (showLinks) document.addEventListener('mousedown', handler)
+    if (showLinks) {
+      document.addEventListener('mousedown', handler)
+      setTimeout(() => linkSearchRef.current?.focus(), 60)
+    } else {
+      setLinkSearch('')
+    }
     return () => document.removeEventListener('mousedown', handler)
   }, [showLinks])
 
@@ -166,52 +185,80 @@ export default function NavBar() {
             <div className="app-nav-display-menu">
               <div className="app-nav-display-header">เลือกจอแสดงคิว</div>
 
-              {displayConfigs.length === 0 ? (
-                <div className="app-nav-display-empty">
-                  ยังไม่มีจอแสดงคิว —{' '}
-                  <span className="app-nav-display-manage" onClick={() => { navigate('/display-configs'); setShowDisplayNav(false) }}>
-                    สร้างใหม่
-                  </span>
-                </div>
-              ) : (
-                displayConfigs.map(cfg => (
-                  <div key={cfg.id} className="app-nav-display-group">
-                    {/* Display row — คลิกเปิดจอ */}
-                    <div
-                      className="app-nav-display-item app-nav-display-item-head"
-                      onClick={() => { openDisplay(cfg); setShowDisplayNav(false) }}
-                    >
-                      <svg width="14" height="14" viewBox="0 0 24 24" fill="none" className="app-nav-display-icon">
-                        <rect x="2" y="4" width="20" height="14" rx="2" stroke="currentColor" strokeWidth="2" />
-                        <path d="M8 20h8M12 18v2" stroke="currentColor" strokeWidth="2" strokeLinecap="round" />
-                      </svg>
-                      <span className="app-nav-display-name">
-                        {cfg.name}
-                        {cfg.channels?.length ? <span className="app-nav-display-ch-count"> ({cfg.channels.length} ช่อง)</span> : null}
-                      </span>
-                    </div>
-                    {/* Channel rows — คลิกเลือกช่องเรียกคิว */}
-                    {cfg.channels?.map(ch => (
-                      <div
-                        key={ch}
-                        className="app-nav-display-channel-item"
-                        onClick={() => {
-                          const officer = sessionStorage.getItem('officer') || 'default'
-                          const prefs = JSON.parse(localStorage.getItem(`qc_prefs_${officer}`) || '{}')
-                          prefs.selectedDisplayId = cfg.id
-                          prefs.servicePointId = ch
-                          localStorage.setItem(`qc_prefs_${officer}`, JSON.stringify(prefs))
-                          window.dispatchEvent(new CustomEvent('qc-display-selected', { detail: { displayId: cfg.id, channel: ch } }))
-                          setShowDisplayNav(false)
-                        }}
-                      >
-                        <span className="app-nav-display-channel-dot" />
-                        ช่อง {ch}
+              <div className="app-nav-display-search-wrap">
+                <svg width="13" height="13" viewBox="0 0 24 24" fill="none" className="app-nav-display-search-icon">
+                  <circle cx="11" cy="11" r="8" stroke="currentColor" strokeWidth="2"/>
+                  <path d="M21 21l-4.35-4.35" stroke="currentColor" strokeWidth="2" strokeLinecap="round"/>
+                </svg>
+                <input
+                  ref={displayNavSearchRef}
+                  className="app-nav-display-search-input"
+                  type="text"
+                  placeholder="ค้นหาจอแสดงคิว..."
+                  value={displayNavSearch}
+                  onChange={e => setDisplayNavSearch(e.target.value)}
+                  onKeyDown={e => e.stopPropagation()}
+                />
+                {displayNavSearch && (
+                  <button className="app-nav-display-search-clear" onClick={() => { setDisplayNavSearch(''); displayNavSearchRef.current?.focus() }}>✕</button>
+                )}
+              </div>
+
+              <div className="app-nav-display-list-scroll">
+                {(() => {
+                  const filtered = displaySearchFilter(displayConfigs, displayNavSearch)
+                  if (displayConfigs.length === 0) {
+                    return (
+                      <div className="app-nav-display-empty">
+                        ยังไม่มีจอแสดงคิว —{' '}
+                        <span className="app-nav-display-manage" onClick={() => { navigate('/display-configs'); setShowDisplayNav(false) }}>
+                          สร้างใหม่
+                        </span>
                       </div>
-                    ))}
-                  </div>
-                ))
-              )}
+                    )
+                  }
+                  if (filtered.length === 0) {
+                    return <div className="app-nav-display-empty">ไม่พบจอ "{displayNavSearch}"</div>
+                  }
+                  return filtered.map(cfg => (
+                    <div key={cfg.id} className="app-nav-display-group">
+                      {/* Display row — คลิกเปิดจอ */}
+                      <div
+                        className="app-nav-display-item app-nav-display-item-head"
+                        onClick={() => { openDisplay(cfg); setShowDisplayNav(false) }}
+                      >
+                        <svg width="14" height="14" viewBox="0 0 24 24" fill="none" className="app-nav-display-icon">
+                          <rect x="2" y="4" width="20" height="14" rx="2" stroke="currentColor" strokeWidth="2" />
+                          <path d="M8 20h8M12 18v2" stroke="currentColor" strokeWidth="2" strokeLinecap="round" />
+                        </svg>
+                        <span className="app-nav-display-name">
+                          {cfg.name}
+                          {cfg.channels?.length ? <span className="app-nav-display-ch-count"> ({cfg.channels.length} ช่อง)</span> : null}
+                        </span>
+                      </div>
+                      {/* Channel rows — คลิกเลือกช่องเรียกคิว */}
+                      {cfg.channels?.map(ch => (
+                        <div
+                          key={ch}
+                          className="app-nav-display-channel-item"
+                          onClick={() => {
+                            const officer = sessionStorage.getItem('officer') || 'default'
+                            const prefs = JSON.parse(localStorage.getItem(`qc_prefs_${officer}`) || '{}')
+                            prefs.selectedDisplayId = cfg.id
+                            prefs.servicePointId = ch
+                            localStorage.setItem(`qc_prefs_${officer}`, JSON.stringify(prefs))
+                            window.dispatchEvent(new CustomEvent('qc-display-selected', { detail: { displayId: cfg.id, channel: ch } }))
+                            setShowDisplayNav(false)
+                          }}
+                        >
+                          <span className="app-nav-display-channel-dot" />
+                          ช่อง {ch}
+                        </div>
+                      ))}
+                    </div>
+                  ))
+                })()}
+              </div>
 
               <div className="app-nav-display-divider" />
               <div
@@ -244,72 +291,113 @@ export default function NavBar() {
 
           {showLinks && (
             <div className="app-nav-copylink-menu">
-              {/* ── จอแสดงคิว (dynamic) ── */}
-              <div className="app-nav-copylink-header">🖥 จอแสดงคิว</div>
-              {displayConfigs.length === 0 ? (
-                <div className="app-nav-copylink-item" style={{ opacity: 0.5, fontSize: 12 }}>
-                  <span className="app-nav-copylink-icon">🖥</span>
-                  <div className="app-nav-copylink-info">
-                    <div className="app-nav-copylink-label">หน้าจอแสดงคิว (ทั่วไป)</div>
-                    <div className="app-nav-copylink-url">{serverOrigin}/#/display</div>
-                  </div>
-                  <button className={`app-nav-copylink-btn${copiedKey === 'display' ? ' copied' : ''}`}
-                    onClick={() => copyLink('display', '/#/display')}>
-                    {copiedKey === 'display' ? '✓ คัดลอกแล้ว' : 'คัดลอก'}
-                  </button>
-                </div>
-              ) : (
-                displayConfigs.map(cfg => {
-                  const path = `/#/display?id=${cfg.id}`
-                  const key = `display-${cfg.id}`
-                  const url = serverOrigin + path
-                  return (
-                    <div key={key} className="app-nav-copylink-item">
-                      <span className="app-nav-copylink-icon">🖥</span>
-                      <div className="app-nav-copylink-info">
-                        <div className="app-nav-copylink-label">
-                          {cfg.name}
-                          {cfg.channels?.length ? <span style={{ color: '#00BCD4', marginLeft: 6, fontSize: 11 }}>({cfg.channels.length} ช่อง)</span> : ''}
-                        </div>
-                        <div className="app-nav-copylink-url">{url}</div>
-                      </div>
-                      <button className={`app-nav-copylink-btn${copiedKey === key ? ' copied' : ''}`}
-                        onClick={() => copyLink(key, path)}>
-                        {copiedKey === key ? '✓ คัดลอกแล้ว' : 'คัดลอก'}
-                      </button>
-                      <button className="app-nav-shortcut-btn"
-                        onClick={() => downloadShortcut(cfg.name, path)}
-                        title="ดาวน์โหลด Shortcut (.url)">
-                        ⬇ .url
-                      </button>
-                    </div>
-                  )
-                })
-              )}
+              <div className="app-nav-display-search-wrap">
+                <svg width="13" height="13" viewBox="0 0 24 24" fill="none" className="app-nav-display-search-icon">
+                  <circle cx="11" cy="11" r="8" stroke="currentColor" strokeWidth="2"/>
+                  <path d="M21 21l-4.35-4.35" stroke="currentColor" strokeWidth="2" strokeLinecap="round"/>
+                </svg>
+                <input
+                  ref={linkSearchRef}
+                  className="app-nav-display-search-input"
+                  type="text"
+                  placeholder="ค้นหาลิ้ง..."
+                  value={linkSearch}
+                  onChange={e => setLinkSearch(e.target.value)}
+                  onKeyDown={e => e.stopPropagation()}
+                />
+                {linkSearch && (
+                  <button className="app-nav-display-search-clear" onClick={() => { setLinkSearch(''); linkSearchRef.current?.focus() }}>✕</button>
+                )}
+              </div>
 
-              {/* ── หน้าอื่นๆ ── */}
-              <div className="app-nav-copylink-header" style={{ marginTop: 6 }}>หน้าอื่นๆ</div>
-              {STATIC_PAGES.map(p => {
-                const url = serverOrigin + p.path
-                return (
-                  <div key={p.path} className="app-nav-copylink-item">
-                    <span className="app-nav-copylink-icon">{p.icon}</span>
-                    <div className="app-nav-copylink-info">
-                      <div className="app-nav-copylink-label">{p.label}</div>
-                      <div className="app-nav-copylink-url">{url}</div>
-                    </div>
-                    <button className={`app-nav-copylink-btn${copiedKey === p.path ? ' copied' : ''}`}
-                      onClick={() => copyLink(p.path, p.path)}>
-                      {copiedKey === p.path ? '✓ คัดลอกแล้ว' : 'คัดลอก'}
-                    </button>
-                    <button className="app-nav-shortcut-btn"
-                      onClick={() => downloadShortcut(p.label, p.path)}
-                      title="ดาวน์โหลด Shortcut (.url)">
-                      ⬇ .url
-                    </button>
-                  </div>
-                )
-              })}
+              <div className="app-nav-copylink-list-scroll">
+                {(() => {
+                  const filteredDisplays = displaySearchFilter(displayConfigs, linkSearch)
+                  const filteredStatic = STATIC_PAGES.filter(p =>
+                    !linkSearch.trim() || p.label.toLowerCase().includes(linkSearch.trim().toLowerCase())
+                  )
+                  const nothingFound = filteredDisplays.length === 0 && filteredStatic.length === 0 && displayConfigs.length > 0
+
+                  return (
+                    <>
+                      {/* ── จอแสดงคิว (dynamic) ── */}
+                      {(displayConfigs.length === 0 || filteredDisplays.length > 0) && (
+                        <div className="app-nav-copylink-header">🖥 จอแสดงคิว</div>
+                      )}
+                      {displayConfigs.length === 0 ? (
+                        <div className="app-nav-copylink-item" style={{ opacity: 0.5, fontSize: 12 }}>
+                          <span className="app-nav-copylink-icon">🖥</span>
+                          <div className="app-nav-copylink-info">
+                            <div className="app-nav-copylink-label">หน้าจอแสดงคิว (ทั่วไป)</div>
+                            <div className="app-nav-copylink-url">{serverOrigin}/#/display</div>
+                          </div>
+                          <button className={`app-nav-copylink-btn${copiedKey === 'display' ? ' copied' : ''}`}
+                            onClick={() => copyLink('display', '/#/display')}>
+                            {copiedKey === 'display' ? '✓ คัดลอกแล้ว' : 'คัดลอก'}
+                          </button>
+                        </div>
+                      ) : (
+                        filteredDisplays.map(cfg => {
+                          const path = `/#/display?id=${cfg.id}`
+                          const key = `display-${cfg.id}`
+                          const url = serverOrigin + path
+                          return (
+                            <div key={key} className="app-nav-copylink-item">
+                              <span className="app-nav-copylink-icon">🖥</span>
+                              <div className="app-nav-copylink-info">
+                                <div className="app-nav-copylink-label">
+                                  {cfg.name}
+                                  {cfg.channels?.length ? <span style={{ color: '#00BCD4', marginLeft: 6, fontSize: 11 }}>({cfg.channels.length} ช่อง)</span> : ''}
+                                </div>
+                                <div className="app-nav-copylink-url">{url}</div>
+                              </div>
+                              <button className={`app-nav-copylink-btn${copiedKey === key ? ' copied' : ''}`}
+                                onClick={() => copyLink(key, path)}>
+                                {copiedKey === key ? '✓ คัดลอกแล้ว' : 'คัดลอก'}
+                              </button>
+                              <button className="app-nav-shortcut-btn"
+                                onClick={() => downloadShortcut(cfg.name, path)}
+                                title="ดาวน์โหลด Shortcut (.url)">
+                                ⬇ .url
+                              </button>
+                            </div>
+                          )
+                        })
+                      )}
+
+                      {/* ── หน้าอื่นๆ ── */}
+                      {filteredStatic.length > 0 && (
+                        <div className="app-nav-copylink-header" style={{ marginTop: 6 }}>หน้าอื่นๆ</div>
+                      )}
+                      {filteredStatic.map(p => {
+                        const url = serverOrigin + p.path
+                        return (
+                          <div key={p.path} className="app-nav-copylink-item">
+                            <span className="app-nav-copylink-icon">{p.icon}</span>
+                            <div className="app-nav-copylink-info">
+                              <div className="app-nav-copylink-label">{p.label}</div>
+                              <div className="app-nav-copylink-url">{url}</div>
+                            </div>
+                            <button className={`app-nav-copylink-btn${copiedKey === p.path ? ' copied' : ''}`}
+                              onClick={() => copyLink(p.path, p.path)}>
+                              {copiedKey === p.path ? '✓ คัดลอกแล้ว' : 'คัดลอก'}
+                            </button>
+                            <button className="app-nav-shortcut-btn"
+                              onClick={() => downloadShortcut(p.label, p.path)}
+                              title="ดาวน์โหลด Shortcut (.url)">
+                              ⬇ .url
+                            </button>
+                          </div>
+                        )
+                      })}
+
+                      {nothingFound && (
+                        <div className="app-nav-display-empty">ไม่พบลิ้ง "{linkSearch}"</div>
+                      )}
+                    </>
+                  )
+                })()}
+              </div>
             </div>
           )}
         </div>
