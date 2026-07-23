@@ -31,6 +31,7 @@ export default function QueueCallPage() {
   // Display configs
   const [displayConfigs, setDisplayConfigs] = useState<DisplayConfigItem[]>([])
   const [selectedDisplayId, setSelectedDisplayId] = useState<string>(() => loadSavedPrefs()?.selectedDisplayId || '')
+  const [displaySearch, setDisplaySearch] = useState('')
 
   // Service points (global fallback)
   const [servicePoints, setServicePoints] = useState<ServicePoint[]>([])
@@ -39,6 +40,9 @@ export default function QueueCallPage() {
   // Derived: channels from selected display (if any)
   const selectedDisplay = displayConfigs.find(d => d.id === selectedDisplayId)
   const displayChannels = selectedDisplay?.channels || []
+  const filteredDisplayConfigs = displaySearch.trim()
+    ? displayConfigs.filter(d => d.name.toLowerCase().includes(displaySearch.trim().toLowerCase()))
+    : displayConfigs
   const useDisplayChannels = selectedDisplayId !== '' && displayChannels.length > 0
 
   // Active channel name
@@ -81,6 +85,7 @@ export default function QueueCallPage() {
   const quickCallRef = useRef<HTMLInputElement>(null)
   const deptMenuRef = useRef<HTMLDivElement>(null)
   const displayMenuRef = useRef<HTMLDivElement>(null)
+  const displaySearchRef = useRef<HTMLInputElement>(null)
   const channelMenuRef = useRef<HTMLDivElement>(null)
   const isModeFirstMount = useRef(true)
 
@@ -278,7 +283,12 @@ export default function QueueCallPage() {
       if (displayMenuRef.current && !displayMenuRef.current.contains(e.target as Node))
         setShowDisplayMenu(false)
     }
-    if (showDisplayMenu) document.addEventListener('mousedown', handler)
+    if (showDisplayMenu) {
+      document.addEventListener('mousedown', handler)
+      setTimeout(() => displaySearchRef.current?.focus(), 60)
+    } else {
+      setDisplaySearch('')
+    }
     return () => document.removeEventListener('mousedown', handler)
   }, [showDisplayMenu])
 
@@ -561,27 +571,54 @@ export default function QueueCallPage() {
             </button>
             {showDisplayMenu && (
               <div className="qc-display-menu">
-                <div
-                  className={`qc-display-item${selectedDisplayId === '' ? ' active' : ''}`}
-                  onClick={() => { setSelectedDisplayId(''); setServicePointId(''); setShowDisplayMenu(false) }}
-                >
-                  <span className="qc-display-item-icon">🖥</span>
-                  <span className="qc-display-item-name">— ทั่วไป (ไม่ระบุจอ) —</span>
+                <div className="qc-display-search-wrap">
+                  <svg width="13" height="13" viewBox="0 0 24 24" fill="none" className="qc-display-search-icon">
+                    <circle cx="11" cy="11" r="8" stroke="currentColor" strokeWidth="2"/>
+                    <path d="M21 21l-4.35-4.35" stroke="currentColor" strokeWidth="2" strokeLinecap="round"/>
+                  </svg>
+                  <input
+                    ref={displaySearchRef}
+                    className="qc-display-search-input"
+                    type="text"
+                    placeholder="ค้นหาจอแสดงคิว..."
+                    value={displaySearch}
+                    onChange={e => setDisplaySearch(e.target.value)}
+                    onKeyDown={e => e.stopPropagation()}
+                  />
+                  {displaySearch && (
+                    <button className="qc-display-search-clear" onClick={() => { setDisplaySearch(''); displaySearchRef.current?.focus() }}>✕</button>
+                  )}
                 </div>
-                {displayConfigs.length > 0 && <div className="qc-display-divider" />}
-                {displayConfigs.map(d => (
-                  <div
-                    key={d.id}
-                    className={`qc-display-item${selectedDisplayId === d.id ? ' active' : ''}`}
-                    onClick={() => { setSelectedDisplayId(d.id); setServicePointId(''); setShowDisplayMenu(false) }}
-                  >
-                    <span className="qc-display-item-icon">📺</span>
-                    <span className="qc-display-item-name">{d.name}</span>
-                    {d.channels?.length ? (
-                      <span className="qc-display-item-badge">{d.channels.length} ช่อง</span>
-                    ) : null}
-                  </div>
-                ))}
+                <div className="qc-display-list-scroll">
+                  {!displaySearch && (
+                    <>
+                      <div
+                        className={`qc-display-item${selectedDisplayId === '' ? ' active' : ''}`}
+                        onClick={() => { setSelectedDisplayId(''); setServicePointId(''); setShowDisplayMenu(false) }}
+                      >
+                        <span className="qc-display-item-icon">🖥</span>
+                        <span className="qc-display-item-name">— ทั่วไป (ไม่ระบุจอ) —</span>
+                      </div>
+                      {displayConfigs.length > 0 && <div className="qc-display-divider" />}
+                    </>
+                  )}
+                  {filteredDisplayConfigs.map(d => (
+                    <div
+                      key={d.id}
+                      className={`qc-display-item${selectedDisplayId === d.id ? ' active' : ''}`}
+                      onClick={() => { setSelectedDisplayId(d.id); setServicePointId(''); setShowDisplayMenu(false) }}
+                    >
+                      <span className="qc-display-item-icon">📺</span>
+                      <span className="qc-display-item-name">{d.name}</span>
+                      {d.channels?.length ? (
+                        <span className="qc-display-item-badge">{d.channels.length} ช่อง</span>
+                      ) : null}
+                    </div>
+                  ))}
+                  {displaySearch && filteredDisplayConfigs.length === 0 && (
+                    <div className="qc-display-no-result">ไม่พบจอ "{displaySearch}"</div>
+                  )}
+                </div>
               </div>
             )}
           </div>
