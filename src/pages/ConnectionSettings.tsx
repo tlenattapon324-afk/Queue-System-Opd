@@ -1,6 +1,6 @@
 import { useState, useEffect } from 'react'
 import { useNavigate } from 'react-router-dom'
-import { loadSettings, saveSettings, testConnection } from '../lib/api'
+import { loadSettings, saveSettings, testConnection, checkQueueOpdQsSlotTable, createQueueOpdQsSlotTable } from '../lib/api'
 import './ConnectionSettings.css'
 
 const DEFAULT: DbSettings = {
@@ -115,6 +115,10 @@ export default function ConnectionSettingsPage() {
   const [saving, setSaving] = useState(false)
   const [testResult, setTestResult] = useState<{ success: boolean; message: string } | null>(null)
   const [saved, setSaved] = useState(false)
+  const [tableExists, setTableExists] = useState<boolean | null>(null)
+  const [checkingTable, setCheckingTable] = useState(false)
+  const [creatingTable, setCreatingTable] = useState(false)
+  const [tableResult, setTableResult] = useState<{ success: boolean; message: string } | null>(null)
 
   useEffect(() => {
     loadSettings().then(s => { if (s) setForm(s) })
@@ -124,19 +128,40 @@ export default function ConnectionSettingsPage() {
     setForm(f => ({ ...f, [key]: val }))
     setTestResult(null)
     setSaved(false)
+    setTableExists(null)
+    setTableResult(null)
   }
 
   const handleTypeChange = (type: 'mysql' | 'postgresql') => {
     setForm(f => ({ ...f, type, port: type === 'mysql' ? 3306 : 5432 }))
     setTestResult(null)
+    setTableExists(null)
+    setTableResult(null)
   }
 
   const handleTest = async () => {
     setTesting(true)
     setTestResult(null)
+    setTableExists(null)
+    setTableResult(null)
     const res = await testConnection(form)
     setTesting(false)
     setTestResult(res)
+    if (res.success) {
+      setCheckingTable(true)
+      const t = await checkQueueOpdQsSlotTable(form)
+      setCheckingTable(false)
+      if (t.success) setTableExists(!!t.exists)
+    }
+  }
+
+  const handleCreateTable = async () => {
+    setCreatingTable(true)
+    setTableResult(null)
+    const res = await createQueueOpdQsSlotTable(form)
+    setCreatingTable(false)
+    setTableResult({ success: res.success, message: res.message || '' })
+    if (res.exists) setTableExists(true)
   }
 
   const handleSave = async () => {
@@ -230,6 +255,26 @@ export default function ConnectionSettingsPage() {
             </div>
           )}
           {saved && <div className="alert alert-success animate-fade">✓ บันทึกการตั้งค่าเรียบร้อยแล้ว</div>}
+
+          {testResult?.success && (
+            <div className="table-check-section">
+              <div className="section-label">ตาราง queue_opd_qs_slot</div>
+              {checkingTable ? (
+                <button className="btn btn-ghost" disabled><span className="spinner" /> กำลังตรวจสอบตาราง...</button>
+              ) : tableExists === true ? (
+                <button className="btn btn-muted" disabled>✓ มีตาราง queue_opd_qs_slot แล้ว</button>
+              ) : tableExists === false ? (
+                <button className="btn btn-warning" onClick={handleCreateTable} disabled={creatingTable}>
+                  {creatingTable ? <><span className="spinner" /> กำลังสร้างตาราง...</> : <>➕ เพิ่มตาราง queue_opd_qs_slot</>}
+                </button>
+              ) : null}
+              {tableResult && (
+                <div className={`alert ${tableResult.success ? 'alert-success' : 'alert-error'} animate-fade`}>
+                  {tableResult.success ? '✓ ' : '✗ '}{tableResult.message}
+                </div>
+              )}
+            </div>
+          )}
 
           <div className="settings-actions">
             <button className="btn btn-ghost" onClick={handleTest} disabled={testing || !form.host || !form.database}>

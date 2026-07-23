@@ -108,6 +108,23 @@ html, body, #root {
   transform: translateY(-2px);
 }
 
+.btn-warning {
+  background: linear-gradient(135deg, #FFA726, #EF6C00);
+  color: #fff;
+  box-shadow: 0 4px 15px rgba(255,152,0,0.35);
+}
+.btn-warning:hover:not(:disabled) {
+  transform: translateY(-2px);
+  box-shadow: 0 6px 20px rgba(255,152,0,0.5);
+}
+
+.btn-muted {
+  background: rgba(255,255,255,0.08);
+  color: rgba(255,255,255,0.4);
+  border: 1px solid rgba(255,255,255,0.12);
+}
+.btn-muted:disabled { opacity: 1; cursor: not-allowed; }
+
 /* ─── Input base ────────────────────────────────── */
 .input {
   width: 100%;

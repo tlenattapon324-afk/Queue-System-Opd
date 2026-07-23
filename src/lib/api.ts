@@ -97,6 +97,18 @@ export async function testConnection(s: DbSettings): Promise<{ success: boolean;
   return fetchJSON('/db/test', { method: 'POST', body: JSON.stringify(s) })
 }
 
+export async function checkQueueOpdQsSlotTable(
+  s: DbSettings
+): Promise<{ success: boolean; exists?: boolean; message?: string }> {
+  return fetchJSON('/db/table/queue-opd-qs-slot/check', { method: 'POST', body: JSON.stringify(s) })
+}
+
+export async function createQueueOpdQsSlotTable(
+  s: DbSettings
+): Promise<{ success: boolean; exists?: boolean; message?: string }> {
+  return fetchJSON('/db/table/queue-opd-qs-slot/create', { method: 'POST', body: JSON.stringify(s) })
+}
+
 // ─── Auth ─────────────────────────────────────────────────────────────────────
 
 export async function login(

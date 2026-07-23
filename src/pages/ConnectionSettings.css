@@ -104,6 +104,10 @@
 .form-group.full { grid-column: 1 / -1; }
 .form-label { font-size: 12px; font-weight: 600; color: rgba(255,255,255,0.6); letter-spacing: 0.3px; }
 
+/* Table check */
+.table-check-section { display: flex; flex-direction: column; gap: 10px; }
+.table-check-section .btn { align-self: flex-start; }
+
 /* Actions */
 .settings-actions {
   display: flex;

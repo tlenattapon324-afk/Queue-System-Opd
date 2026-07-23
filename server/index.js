@@ -666,6 +666,247 @@ app.post('/api/db/test', async (req, res) => {
   }
 })
 
+// ─── API: DB Table — queue_opd_qs_slot ────────────────────────────────────────
+
+const QUEUE_OPD_QS_SLOT_TABLE = 'queue_opd_qs_slot'
+
+// No AUTO_INCREMENT/SERIAL — matches the real table, whose id column is a plain
+// PK filled manually as MAX(id)+1 by recordQueueOpdQsSlotCall() below.
+const CREATE_QUEUE_OPD_QS_SLOT_MYSQL = `
+CREATE TABLE queue_opd_qs_slot (
+  queue_opd_qs_slot_id INT(11) NOT NULL,
+  queue_schedule_date DATE,
+  queue_doctor_code VARCHAR(20),
+  queue_queue_slot_number VARCHAR(50),
+  queue_start_time TIME,
+  queue_finish_time TIME,
+  queue_time_second TIME,
+  queue_slot_key VARCHAR(200),
+  queue_vn VARCHAR(12),
+  queue_call_status CHAR(1),
+  queue_call_datetime DATETIME,
+  call_no INT(11),
+  queue_opd_qs_room_id INT(11),
+  queue_call_opd_qs_room_id INT(11),
+  PRIMARY KEY (queue_opd_qs_slot_id)
+) ENGINE=InnoDB DEFAULT CHARSET=utf8`
+
+const CREATE_QUEUE_OPD_QS_SLOT_PG = `
+CREATE TABLE queue_opd_qs_slot (
+  queue_opd_qs_slot_id INTEGER PRIMARY KEY,
+  queue_schedule_date DATE,
+  queue_doctor_code VARCHAR(20),
+  queue_queue_slot_number VARCHAR(50),
+  queue_start_time TIME,
+  queue_finish_time TIME,
+  queue_time_second TIME,
+  queue_slot_key VARCHAR(200),
+  queue_vn VARCHAR(12),
+  queue_call_status CHAR(1),
+  queue_call_datetime TIMESTAMP,
+  call_no INTEGER,
+  queue_opd_qs_room_id INTEGER,
+  queue_call_opd_qs_room_id INTEGER
+)`
+
+async function queueOpdQsSlotExists(s) {
+  if (s.type === 'mysql') {
+    const conn = await mysql.createConnection({
+      host: s.host, port: s.port, database: s.database,
+      user: s.username, password: s.password, connectTimeout: 5000
+    })
+    try {
+      const [rows] = await conn.query(
+        'SELECT COUNT(*) AS cnt FROM information_schema.tables WHERE table_schema = ? AND table_name = ?',
+        [s.database, QUEUE_OPD_QS_SLOT_TABLE]
+      )
+      return rows[0].cnt > 0
+    } finally {
+      await conn.end()
+    }
+  } else {
+    const client = new PgClient({
+      host: s.host, port: s.port, database: s.database,
+      user: s.username, password: s.password, connectionTimeoutMillis: 5000
+    })
+    await client.connect()
+    try {
+      const result = await client.query(
+        'SELECT COUNT(*) AS cnt FROM information_schema.tables WHERE table_name = $1',
+        [QUEUE_OPD_QS_SLOT_TABLE]
+      )
+      return Number(result.rows[0].cnt) > 0
+    } finally {
+      await client.end()
+    }
+  }
+}
+
+app.post('/api/db/table/queue-opd-qs-slot/check', async (req, res) => {
+  try {
+    const exists = await queueOpdQsSlotExists(req.body)
+    res.json({ success: true, exists })
+  } catch (e) {
+    res.json({ success: false, message: e.message })
+  }
+})
+
+app.post('/api/db/table/queue-opd-qs-slot/create', async (req, res) => {
+  try {
+    const s = req.body
+    if (await queueOpdQsSlotExists(s)) {
+      return res.json({ success: false, exists: true, message: 'ตาราง queue_opd_qs_slot มีอยู่แล้ว' })
+    }
+    if (s.type === 'mysql') {
+      const conn = await mysql.createConnection({
+        host: s.host, port: s.port, database: s.database,
+        user: s.username, password: s.password, connectTimeout: 5000
+      })
+      try {
+        await conn.query(CREATE_QUEUE_OPD_QS_SLOT_MYSQL)
+      } finally {
+        await conn.end()
+      }
+    } else {
+      const client = new PgClient({
+        host: s.host, port: s.port, database: s.database,
+        user: s.username, password: s.password, connectionTimeoutMillis: 5000
+      })
+      await client.connect()
+      try {
+        await client.query(CREATE_QUEUE_OPD_QS_SLOT_PG)
+      } finally {
+        await client.end()
+      }
+    }
+    res.json({ success: true, exists: true, message: 'สร้างตาราง queue_opd_qs_slot สำเร็จ' })
+  } catch (e) {
+    res.json({ success: false, message: e.message })
+  }
+})
+
+// ─── queue_opd_qs_slot — log each call (insert one row per call) ──────────────
+
+function pad2(n) { return String(n).padStart(2, '0') }
+function formatTimeHMS(d) { return `${pad2(d.getHours())}:${pad2(d.getMinutes())}:${pad2(d.getSeconds())}` }
+function formatDateTimeSQL(d) {
+  return `${d.getFullYear()}-${pad2(d.getMonth() + 1)}-${pad2(d.getDate())} ${formatTimeHMS(d)}`
+}
+
+// queue_time_second is a TIME column — format the elapsed seconds as ชม:นาที:วินาที.
+// MySQL's TIME supports negative values (-838:59:59..838:59:59); Postgres's does not,
+// so a negative diff is clamped to 00:00:00 there.
+function formatDurationHHMMSS(totalSeconds, allowNegative) {
+  if (totalSeconds == null || Number.isNaN(totalSeconds)) return null
+  const negative = totalSeconds < 0
+  const abs = Math.round(Math.abs(totalSeconds))
+  const h = Math.floor(abs / 3600)
+  const m = Math.floor((abs % 3600) / 60)
+  const s = abs % 60
+  const hms = `${pad2(h)}:${pad2(m)}:${pad2(s)}`
+  return negative && allowNegative ? `-${hms}` : (negative ? '00:00:00' : hms)
+}
+
+const QUEUE_OPD_QS_SLOT_SOURCE_MYSQL = `
+SELECT os.schedule_date, os.doctor_code, os.queue_slot_number, os.start_time, os.slot_key, os.vn, os.opd_qs_room_id,
+       TIME_TO_SEC(?) - TIME_TO_SEC(ov.vsttime) AS diff_seconds
+FROM opd_qs_slot os
+LEFT JOIN ovst ov ON ov.vn = os.vn
+WHERE os.vn = ? AND os.queue_slot_number = ?
+LIMIT 1`
+
+const QUEUE_OPD_QS_SLOT_SOURCE_PG = `
+SELECT os.schedule_date, os.doctor_code, os.queue_slot_number, os.start_time, os.slot_key, os.vn, os.opd_qs_room_id,
+       EXTRACT(EPOCH FROM ($1::time - ov.vsttime::time)) AS diff_seconds
+FROM opd_qs_slot os
+LEFT JOIN ovst ov ON ov.vn = os.vn
+WHERE os.vn = $2 AND os.queue_slot_number = $3
+LIMIT 1`
+
+const QUEUE_OPD_QS_SLOT_INSERT_MYSQL = `
+INSERT INTO queue_opd_qs_slot
+  (queue_opd_qs_slot_id, queue_schedule_date, queue_doctor_code, queue_queue_slot_number, queue_start_time,
+   queue_finish_time, queue_time_second, queue_slot_key, queue_vn, queue_call_status, queue_call_datetime, call_no, queue_opd_qs_room_id)
+VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, 'Y', ?, ?, ?)`
+
+const QUEUE_OPD_QS_SLOT_INSERT_PG = `
+INSERT INTO queue_opd_qs_slot
+  (queue_opd_qs_slot_id, queue_schedule_date, queue_doctor_code, queue_queue_slot_number, queue_start_time,
+   queue_finish_time, queue_time_second, queue_slot_key, queue_vn, queue_call_status, queue_call_datetime, call_no, queue_opd_qs_room_id)
+VALUES ($1, $2, $3, $4, $5, $6, $7, $8, $9, 'Y', $10, $11, $12)`
+
+// queue_opd_qs_slot_id has no AUTO_INCREMENT on the real table — next id is MAX(id)+1,
+// computed under a row lock (FOR UPDATE) in the same transaction as the insert to avoid
+// two concurrent calls picking the same id. call_no counts how many times this same
+// vn+queue_slot_number has already been logged (re-calls), so it reads 1, 2, 3... in order.
+async function recordQueueOpdQsSlotCall(settings, vn, queueSlotNumber) {
+  if (!vn || !queueSlotNumber) return
+  const now = new Date()
+  const finishTime = formatTimeHMS(now)
+  const callDatetime = formatDateTimeSQL(now)
+  try {
+    if (settings.type === 'mysql') {
+      const pool = getMysqlPool(settings)
+      const conn = await pool.getConnection()
+      try {
+        await conn.beginTransaction()
+        const [rows] = await conn.query(QUEUE_OPD_QS_SLOT_SOURCE_MYSQL, [finishTime, vn, queueSlotNumber])
+        const src = rows[0]
+        if (!src) { await conn.rollback(); return }
+        const [idRows] = await conn.query('SELECT COALESCE(MAX(queue_opd_qs_slot_id), 0) + 1 AS next_id FROM queue_opd_qs_slot FOR UPDATE')
+        const [cntRows] = await conn.query(
+          'SELECT COUNT(*) AS cnt FROM queue_opd_qs_slot WHERE queue_vn = ? AND queue_queue_slot_number = ?',
+          [vn, queueSlotNumber]
+        )
+        const callNo = cntRows[0].cnt + 1
+        await conn.query(QUEUE_OPD_QS_SLOT_INSERT_MYSQL, [
+          idRows[0].next_id, src.schedule_date, src.doctor_code, src.queue_slot_number, src.start_time,
+          finishTime, formatDurationHHMMSS(src.diff_seconds, true), src.slot_key, src.vn, callDatetime, callNo, src.opd_qs_room_id
+        ])
+        await conn.commit()
+      } catch (err) {
+        await conn.rollback().catch(() => {})
+        throw err
+      } finally {
+        conn.release()
+      }
+    } else {
+      const client = new PgClient({
+        host: settings.host, port: settings.port, database: settings.database,
+        user: settings.username, password: settings.password, connectionTimeoutMillis: 5000
+      })
+      await client.connect()
+      try {
+        await client.query('BEGIN')
+        const result = await client.query(QUEUE_OPD_QS_SLOT_SOURCE_PG, [finishTime, vn, queueSlotNumber])
+        const src = result.rows[0]
+        if (!src) { await client.query('ROLLBACK'); return }
+        // Aggregates can't take FOR UPDATE directly in Postgres — lock the raw rows in a subquery first.
+        const idResult = await client.query(
+          'SELECT COALESCE(MAX(id), 0) + 1 AS next_id FROM (SELECT queue_opd_qs_slot_id AS id FROM queue_opd_qs_slot FOR UPDATE) t'
+        )
+        const cntResult = await client.query(
+          'SELECT COUNT(*) AS cnt FROM queue_opd_qs_slot WHERE queue_vn = $1 AND queue_queue_slot_number = $2',
+          [vn, queueSlotNumber]
+        )
+        const callNo = Number(cntResult.rows[0].cnt) + 1
+        await client.query(QUEUE_OPD_QS_SLOT_INSERT_PG, [
+          idResult.rows[0].next_id, src.schedule_date, src.doctor_code, src.queue_slot_number, src.start_time,
+          finishTime, formatDurationHHMMSS(Number(src.diff_seconds), false), src.slot_key, src.vn, callDatetime, callNo, src.opd_qs_room_id
+        ])
+        await client.query('COMMIT')
+      } catch (err) {
+        await client.query('ROLLBACK').catch(() => {})
+        throw err
+      } finally {
+        await client.end()
+      }
+    }
+  } catch (err) {
+    console.error('[queue_opd_qs_slot] record failed:', err.message)
+  }
+}
+
 // ─── API: Auth ────────────────────────────────────────────────────────────────
 
 app.post('/api/auth/login', async (req, res) => {
@@ -1038,6 +1279,11 @@ app.post('/api/queue/call', async (req, res) => {
     // Respond and broadcast queue number immediately — don't wait for TTS
     broadcast({ type: 'queue:called', data: { queueNo: displayNo, servicePoint: String(servicePoint), audioUrl: null, displayConfigId: displayConfigId || null, queueName, department } })
     res.json({ success: true, queueNo: displayNo, queueSlot: found.queue_slot })
+
+    // Log this call into queue_opd_qs_slot (Slot modes only) — fire-and-forget
+    if (qMode === 'slot' || qMode === 'slot_cur') {
+      recordQueueOpdQsSlotCall(settings, found.vn, found.queue_slot).catch(() => {})
+    }
 
     // Generate TTS async in background, broadcast audio when ready
     try {
