@@ -387,17 +387,6 @@ export default function QueueDisplayPage() {
     })
   }, []) // eslint-disable-line react-hooks/exhaustive-deps
 
-  // Load channels + name from DisplayConfigItem when opened with ?id=
-  useEffect(() => {
-    if (!URL_DISPLAY_ID) return
-    getDisplayConfigById(URL_DISPLAY_ID).then(dcfg => {
-      if (!dcfg) return
-      const channels = dcfg.channels || []
-      setConfig(c => ({ ...c, displayConfigId: URL_DISPLAY_ID, displayConfigName: dcfg.name || '', displayChannels: channels }))
-      if (dcfg.name) document.title = `จอ: ${dcfg.name} — Queue OPD`
-    })
-  }, []) // eslint-disable-line react-hooks/exhaustive-deps
-
   // When settings panel opens: re-sync TTS config from server + reload server voices
   const TTS_KEYS_CONST: (keyof QDConfig)[] = [
     'ttsEnabled', 'ttsSource', 'ttsPrefix1', 'ttsMiddle', 'ttsSuffix',
@@ -469,6 +458,20 @@ export default function QueueDisplayPage() {
   useEffect(() => {
     const refresh = async () => {
       const cfg = configRef.current
+      // Keep this display's channel list / name in sync with "จัดการหน้าจอแสดงคิว" — channels
+      // added/removed there previously only took effect after a full page reload here.
+      if (URL_DISPLAY_ID) {
+        getDisplayConfigById(URL_DISPLAY_ID).then(dcfg => {
+          if (!dcfg) return
+          const channels = dcfg.channels || []
+          setConfig(c => {
+            const sameChannels = c.displayChannels.length === channels.length && c.displayChannels.every((ch, i) => ch === channels[i])
+            if (sameChannels && c.displayConfigId === URL_DISPLAY_ID && c.displayConfigName === (dcfg.name || '')) return c
+            return { ...c, displayConfigId: URL_DISPLAY_ID, displayConfigName: dcfg.name || '', displayChannels: channels }
+          })
+          if (dcfg.name) document.title = `จอ: ${dcfg.name} — Queue OPD`
+        }).catch(() => {})
+      }
       const [calls, queueRes] = await Promise.all([
         getCallsToday(),
         getQueueList(cfg.upcomingQueueMode).catch(() => ({ success: false, data: [] }))

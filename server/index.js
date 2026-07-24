@@ -685,7 +685,7 @@ CREATE TABLE queue_opd_qs_slot (
   queue_vn VARCHAR(12),
   queue_call_status CHAR(1),
   queue_call_datetime DATETIME,
-  call_no INT(11),
+  queue_call_no INT(11),
   queue_opd_qs_room_id INT(11),
   queue_call_opd_qs_room_id INT(11),
   PRIMARY KEY (queue_opd_qs_slot_id)
@@ -704,7 +704,7 @@ CREATE TABLE queue_opd_qs_slot (
   queue_vn VARCHAR(12),
   queue_call_status CHAR(1),
   queue_call_datetime TIMESTAMP,
-  call_no INTEGER,
+  queue_call_no INTEGER,
   queue_opd_qs_room_id INTEGER,
   queue_call_opd_qs_room_id INTEGER
 )`
@@ -826,18 +826,18 @@ LIMIT 1`
 const QUEUE_OPD_QS_SLOT_INSERT_MYSQL = `
 INSERT INTO queue_opd_qs_slot
   (queue_opd_qs_slot_id, queue_schedule_date, queue_doctor_code, queue_queue_slot_number, queue_start_time,
-   queue_finish_time, queue_time_second, queue_slot_key, queue_vn, queue_call_status, queue_call_datetime, call_no, queue_opd_qs_room_id)
+   queue_finish_time, queue_time_second, queue_slot_key, queue_vn, queue_call_status, queue_call_datetime, queue_call_no, queue_opd_qs_room_id)
 VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, 'Y', ?, ?, ?)`
 
 const QUEUE_OPD_QS_SLOT_INSERT_PG = `
 INSERT INTO queue_opd_qs_slot
   (queue_opd_qs_slot_id, queue_schedule_date, queue_doctor_code, queue_queue_slot_number, queue_start_time,
-   queue_finish_time, queue_time_second, queue_slot_key, queue_vn, queue_call_status, queue_call_datetime, call_no, queue_opd_qs_room_id)
+   queue_finish_time, queue_time_second, queue_slot_key, queue_vn, queue_call_status, queue_call_datetime, queue_call_no, queue_opd_qs_room_id)
 VALUES ($1, $2, $3, $4, $5, $6, $7, $8, $9, 'Y', $10, $11, $12)`
 
 // queue_opd_qs_slot_id has no AUTO_INCREMENT on the real table — next id is MAX(id)+1,
 // computed under a row lock (FOR UPDATE) in the same transaction as the insert to avoid
-// two concurrent calls picking the same id. call_no counts how many times this same
+// two concurrent calls picking the same id. queue_call_no counts how many times this same
 // vn+queue_slot_number has already been logged (re-calls), so it reads 1, 2, 3... in order.
 async function recordQueueOpdQsSlotCall(settings, vn, queueSlotNumber) {
   if (!vn || !queueSlotNumber) return
