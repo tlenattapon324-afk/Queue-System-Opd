@@ -303,8 +303,12 @@ export default function QueueDisplayPage() {
   const [audioUnlocked, setAudioUnlocked] = useState(false)
 
   const audioCtx = useRef<AudioContext | null>(null)
-  // Display update buffered from queue:called — applied just before audio plays (sync display+audio)
-  const pendingDisplayRef = useRef<Array<{sp:string; queueNo:string; queueName:string; displayConfigId?:string|null; department?:string}>>([])
+  // Display update buffered from queue:called — applied just before audio plays (sync display+audio).
+  // Each entry owns its OWN fallback timer + played flag (not a single shared ref) — otherwise
+  // calling a second queue (even to a different channel) before the first's audio arrives would
+  // cancel the first call's 9s fallback via a shared ref, silently losing its announcement if the
+  // server audio for it never arrives either.
+  const pendingDisplayRef = useRef<Array<{sp:string; queueNo:string; queueName:string; displayConfigId?:string|null; department?:string; played: boolean; fallbackTimer?: ReturnType<typeof setTimeout>}>>([])
   const audioQueue = useRef<Array<{ url: string; volume: number; display?: {sp:string; queueNo:string; queueName:string; department?:string} }>>([])
   const audioPlaying = useRef(false)
   const audioGeneration = useRef(0)
@@ -312,8 +316,6 @@ export default function QueueDisplayPage() {
   const audioEl = useRef<HTMLAudioElement | null>(null)
   // Tracks successful plays — element is recycled every 15 plays to prevent Android WebView state accumulation
   const audioPlayCount = useRef(0)
-  const serverTtsFallbackTimer = useRef<ReturnType<typeof setTimeout> | null>(null)
-  const browserTtsPlayedForCall = useRef(false)
   const isResizing = useRef(false)
   const configRef = useRef(config)
   // Snapshot of the last-saved config — restored if the settings panel is closed without saving
@@ -531,32 +533,30 @@ export default function QueueDisplayPage() {
       const isServerTts = cfg.ttsEnabled && cfg.ttsSource === 'server'
 
       if (isServerTts) {
-        // Buffer display update — will be applied just before audio plays (keeps display+audio in sync)
-        pendingDisplayRef.current.push({
+        // Buffer display update — will be applied just before audio plays (keeps display+audio in sync).
+        // Each call gets its own entry with its own fallback timer, so a second call (even to a
+        // different channel) arriving before this one's audio does can never cancel THIS one's fallback.
+        const entry: (typeof pendingDisplayRef)['current'][number] = {
           sp: data.servicePoint,
           queueNo: data.queueNo,
           queueName: (data as any).queueName || '',
           displayConfigId: data.displayConfigId,
-          department: (data as any).department
-        })
-        // Fallback: if queue:audio never arrives (TTS failed), apply display + browser TTS after 9s
-        browserTtsPlayedForCall.current = false
-        if (serverTtsFallbackTimer.current) clearTimeout(serverTtsFallbackTimer.current)
-        const snapData = data, snapCfg = cfg
-        serverTtsFallbackTimer.current = setTimeout(() => {
-          if (!browserTtsPlayedForCall.current) {
-            browserTtsPlayedForCall.current = true
-            // Pop and apply pending display update
-            const pi = pendingDisplayRef.current.findIndex(p => p.sp === snapData.servicePoint && p.queueNo === snapData.queueNo)
-            if (pi >= 0) {
-              const pd = pendingDisplayRef.current.splice(pi, 1)[0]
-              setSpQueues(prev => ({ ...prev, [pd.sp]: pd.queueNo }))
-              setSpNames(prev => ({ ...prev, [pd.sp]: pd.queueName }))
-              setRowAnimKeys(prev => ({ ...prev, [pd.sp]: (prev[pd.sp] || 0) + 1 }))
-              setLastCalled({ sp: pd.sp, queueNo: pd.queueNo, queueName: pd.queueName, department: pd.department, animKey: Date.now() })
-            }
-            playTTS(snapData.queueNo, snapData.servicePoint, snapCfg, (snapData as any).queueName)
-          }
+          department: (data as any).department,
+          played: false
+        }
+        pendingDisplayRef.current.push(entry)
+        // Fallback: if queue:audio never arrives for THIS call (TTS failed), apply display + browser TTS after 9s
+        const snapCfg = cfg
+        entry.fallbackTimer = setTimeout(() => {
+          if (entry.played) return
+          entry.played = true
+          const pi = pendingDisplayRef.current.indexOf(entry)
+          if (pi >= 0) pendingDisplayRef.current.splice(pi, 1)
+          setSpQueues(prev => ({ ...prev, [entry.sp]: entry.queueNo }))
+          setSpNames(prev => ({ ...prev, [entry.sp]: entry.queueName }))
+          setRowAnimKeys(prev => ({ ...prev, [entry.sp]: (prev[entry.sp] || 0) + 1 }))
+          setLastCalled({ sp: entry.sp, queueNo: entry.queueNo, queueName: entry.queueName, department: entry.department, animKey: Date.now() })
+          playTTS(entry.queueNo, entry.sp, snapCfg, entry.queueName)
         }, 9000)
       } else {
         // Non-server TTS or no TTS — update display immediately
@@ -604,6 +604,7 @@ export default function QueueDisplayPage() {
         // Invalidate all in-flight drain sessions + discard stale audio
         audioGeneration.current++
         audioQueue.current = []
+        pendingDisplayRef.current.forEach(p => { p.played = true; if (p.fallbackTimer) clearTimeout(p.fallbackTimer) })
         pendingDisplayRef.current = []
         if (audioEl.current) {
           audioEl.current.onerror = null
@@ -745,11 +746,22 @@ export default function QueueDisplayPage() {
       const cfg = configRef.current
       if (cfg.displayConfigId && data.displayConfigId && data.displayConfigId !== cfg.displayConfigId) return
       if (cfg.filterDepts.length > 0 && (data as any).department && !cfg.filterDepts.includes((data as any).department)) return
-      if (serverTtsFallbackTimer.current) { clearTimeout(serverTtsFallbackTimer.current); serverTtsFallbackTimer.current = null }
       if (window.speechSynthesis?.speaking) window.speechSynthesis.cancel()
-      browserTtsPlayedForCall.current = false
-      // Pop matching pending display update (FIFO — paired with this audio)
-      const pending = pendingDisplayRef.current.shift()
+      // Match this audio to ITS OWN pending entry by servicePoint+queueNo — not a blind FIFO shift().
+      // Two calls can arrive close together (e.g. different channels) and their server TTS can finish
+      // out of order, so shift() would sometimes pop the wrong entry and pair the wrong display update
+      // with this audio (or leave the true match permanently stuck, silencing a later call).
+      const pi = pendingDisplayRef.current.findIndex(p => !p.played && p.sp === data.servicePoint && p.queueNo === data.queueNo)
+      let pending: (typeof pendingDisplayRef)['current'][number] | undefined
+      if (pi >= 0) {
+        pending = pendingDisplayRef.current.splice(pi, 1)[0]
+        pending.played = true
+        if (pending.fallbackTimer) clearTimeout(pending.fallbackTimer)
+      } else {
+        // No servicePoint/queueNo on this broadcast (older server) or already consumed — fall back to FIFO
+        pending = pendingDisplayRef.current.shift()
+        if (pending) { pending.played = true; if (pending.fallbackTimer) clearTimeout(pending.fallbackTimer) }
+      }
       // Enqueue audio + display update — drain applies display then plays audio in order
       enqueueAudio(data.audioUrl, cfg.ttsVolume ?? 1, pending ? { sp: pending.sp, queueNo: pending.queueNo, queueName: pending.queueName, department: pending.department } : undefined)
     })
@@ -936,9 +948,14 @@ export default function QueueDisplayPage() {
     }))
   }
 
-  const filteredNoShow = config.filterDepts.length === 0
+  // เรียกแล้วไม่มา — ขอบเขตเดียวกับคิวถัดไป: ใช้ห้องตรวจที่เลือกไว้ ถ้าไม่ได้เลือกไว้ใช้แผนก
+  // ของคิวล่าสุดที่เพิ่งเรียกแทน ไม่งั้นทุกจอจะเห็นคิวไม่มาของทุกห้องตรวจปนกันหมด
+  const noShowScopeDepts = config.filterDepts.length > 0
+    ? config.filterDepts
+    : (lastCalled?.department ? [lastCalled.department] : [])
+  const filteredNoShow = noShowScopeDepts.length === 0
     ? noShowQueues
-    : noShowQueues.filter(q => !q.department || config.filterDepts.includes(q.department))
+    : noShowQueues.filter(q => q.department && noShowScopeDepts.includes(q.department))
 
   const fontFace = `'${config.font}', 'Sarabun', 'Tahoma', sans-serif`
   const animClass = { fade: 'anim-fade', slide: 'anim-slide', scale: 'anim-scale', bounce: 'anim-bounce' }[config.animationType]
@@ -1200,16 +1217,16 @@ export default function QueueDisplayPage() {
         >
           <div className="qd-right-hd" style={{ background: config.rightPanelHeaderBg, color: config.rightPanelHeaderColor }}>
             {config.rightPanelLabel}
-            {noShowQueues.length > 0 && (
-              <span className="qd-right-count">{noShowQueues.length}</span>
+            {filteredNoShow.length > 0 && (
+              <span className="qd-right-count">{filteredNoShow.length}</span>
             )}
           </div>
           <div className="qd-right-body">
-            {noShowQueues.length === 0 ? (
+            {filteredNoShow.length === 0 ? (
               <span className="qd-right-empty">ไม่มีรายการ</span>
             ) : (
               <div className="qd-noshow-list">
-                {[...noShowQueues].sort((a, b) => (b.calledAt || '').localeCompare(a.calledAt || '')).slice(0, config.rightPanelMaxItems).map((item) => {
+                {[...filteredNoShow].sort((a, b) => (b.calledAt || '').localeCompare(a.calledAt || '')).slice(0, config.rightPanelMaxItems).map((item) => {
                   const badge = extractBadge(item.queueNo)
                   return (
                     <div key={item.vn} className="qd-noshow-item"

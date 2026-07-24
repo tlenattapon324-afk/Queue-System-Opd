@@ -73,6 +73,7 @@ export default function QueueCallPage() {
   const [pendingCall, setPendingCall] = useState<QueueRow | null>(null)
   const [showDisplayMenu, setShowDisplayMenu] = useState(false)
   const [showChannelMenu, setShowChannelMenu] = useState(false)
+  const [channelSearch, setChannelSearch] = useState('')
   const [clearMsg, setClearMsg] = useState(false)
   const [lockedVn, setLockedVn] = useState<string | null>(null)
   const [showShortcutHelp, setShowShortcutHelp] = useState(false)
@@ -87,6 +88,7 @@ export default function QueueCallPage() {
   const displayMenuRef = useRef<HTMLDivElement>(null)
   const displaySearchRef = useRef<HTMLInputElement>(null)
   const channelMenuRef = useRef<HTMLDivElement>(null)
+  const channelSearchRef = useRef<HTMLInputElement>(null)
   const isModeFirstMount = useRef(true)
 
   const currentSp = servicePoints.find(sp => sp.id === servicePointId)
@@ -308,7 +310,12 @@ export default function QueueCallPage() {
       if (channelMenuRef.current && !channelMenuRef.current.contains(e.target as Node))
         setShowChannelMenu(false)
     }
-    if (showChannelMenu) document.addEventListener('mousedown', handler)
+    if (showChannelMenu) {
+      document.addEventListener('mousedown', handler)
+      setTimeout(() => channelSearchRef.current?.focus(), 60)
+    } else {
+      setChannelSearch('')
+    }
     return () => document.removeEventListener('mousedown', handler)
   }, [showChannelMenu])
 
@@ -643,29 +650,62 @@ export default function QueueCallPage() {
                     <path d="M6 9l6 6 6-6" stroke="currentColor" strokeWidth="2.5" strokeLinecap="round" strokeLinejoin="round"/>
                   </svg>
                 </button>
-                {showChannelMenu && (
-                  <div className="qc-display-menu">
-                    {useDisplayChannels ? displayChannels.map(ch => (
-                      <div
-                        key={ch}
-                        className={`qc-display-item${servicePointId === ch ? ' active' : ''}`}
-                        onClick={() => { setServicePointId(ch); setShowChannelMenu(false) }}
-                      >
-                        <span className="qc-display-item-icon">🏥</span>
-                        <span className="qc-display-item-name">ช่อง {ch}</span>
+                {showChannelMenu && (() => {
+                  const q = channelSearch.trim().toLowerCase()
+                  const filteredChannels = useDisplayChannels
+                    ? displayChannels.filter(ch => !q || ch.toLowerCase().includes(q) || `ช่อง ${ch}`.toLowerCase().includes(q))
+                    : []
+                  const filteredSPs = !useDisplayChannels
+                    ? servicePoints.filter(sp => !q || sp.name.toLowerCase().includes(q))
+                    : []
+                  const noResult = q && (useDisplayChannels ? filteredChannels.length === 0 : filteredSPs.length === 0)
+                  return (
+                    <div className="qc-display-menu">
+                      <div className="qc-display-search-wrap">
+                        <svg width="13" height="13" viewBox="0 0 24 24" fill="none" className="qc-display-search-icon">
+                          <circle cx="11" cy="11" r="8" stroke="currentColor" strokeWidth="2"/>
+                          <path d="M21 21l-4.35-4.35" stroke="currentColor" strokeWidth="2" strokeLinecap="round"/>
+                        </svg>
+                        <input
+                          ref={channelSearchRef}
+                          className="qc-display-search-input"
+                          type="text"
+                          placeholder="ค้นหาช่องบริการ..."
+                          value={channelSearch}
+                          onChange={e => setChannelSearch(e.target.value)}
+                          onKeyDown={e => e.stopPropagation()}
+                        />
+                        {channelSearch && (
+                          <button className="qc-display-search-clear" onClick={() => { setChannelSearch(''); channelSearchRef.current?.focus() }}>✕</button>
+                        )}
                       </div>
-                    )) : servicePoints.map(sp => (
-                      <div
-                        key={sp.id}
-                        className={`qc-display-item${servicePointId === sp.id ? ' active' : ''}`}
-                        onClick={() => { setServicePointId(sp.id); setShowChannelMenu(false) }}
-                      >
-                        <span className="qc-display-item-icon">🖥</span>
-                        <span className="qc-display-item-name">{sp.name}</span>
+                      <div className="qc-display-list-scroll">
+                        {useDisplayChannels ? filteredChannels.map(ch => (
+                          <div
+                            key={ch}
+                            className={`qc-display-item${servicePointId === ch ? ' active' : ''}`}
+                            onClick={() => { setServicePointId(ch); setShowChannelMenu(false) }}
+                          >
+                            <span className="qc-display-item-icon">🏥</span>
+                            <span className="qc-display-item-name">ช่อง {ch}</span>
+                          </div>
+                        )) : filteredSPs.map(sp => (
+                          <div
+                            key={sp.id}
+                            className={`qc-display-item${servicePointId === sp.id ? ' active' : ''}`}
+                            onClick={() => { setServicePointId(sp.id); setShowChannelMenu(false) }}
+                          >
+                            <span className="qc-display-item-icon">🖥</span>
+                            <span className="qc-display-item-name">{sp.name}</span>
+                          </div>
+                        ))}
+                        {noResult && (
+                          <div className="qc-display-no-result">ไม่พบช่อง "{channelSearch}"</div>
+                        )}
                       </div>
-                    ))}
-                  </div>
-                )}
+                    </div>
+                  )
+                })()}
               </>
             ) : (
               <span className="qc-topbar-sp-none">— ไม่มีช่องบริการ</span>

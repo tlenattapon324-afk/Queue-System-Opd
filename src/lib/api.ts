@@ -21,7 +21,7 @@ let _ws: WebSocket | null = null
 const _wsListeners: Set<(data: { queueNo: string; servicePoint: string; audioUrl?: string | null; displayConfigId?: string | null }) => void> = new Set()
 const _configListeners: Set<(config: unknown) => void> = new Set()
 const _statusListeners: Set<(data: { vn: string; status: string; queueNo?: string; servicePoint?: string }) => void> = new Set()
-const _audioListeners: Set<(data: { audioUrl: string; displayConfigId?: string | null }) => void> = new Set()
+const _audioListeners: Set<(data: { audioUrl: string; displayConfigId?: string | null; servicePoint?: string; queueNo?: string }) => void> = new Set()
 const _clearListeners: Set<(data: { displayConfigId: string | null }) => void> = new Set()
 
 let _wsReconnectTimer: ReturnType<typeof setTimeout> | null = null
@@ -287,7 +287,7 @@ export function onDisplayConfig(cb: (config: unknown) => void): () => void {
 }
 
 export function onQueueAudio(
-  cb: (data: { audioUrl: string; displayConfigId?: string | null }) => void
+  cb: (data: { audioUrl: string; displayConfigId?: string | null; servicePoint?: string; queueNo?: string }) => void
 ): () => void {
   if (typeof window !== 'undefined') getWS()
   _audioListeners.add(cb)

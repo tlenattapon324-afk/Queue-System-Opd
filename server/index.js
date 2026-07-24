@@ -525,6 +525,17 @@ async function generateServerTTS(text, voiceName, rate) {
     const sapiPromise = _hostAudioEnabled
       ? generateSAPITTS(text, 'Microsoft Pattara', rate).catch(() => null)
       : null
+
+    // Wait briefly for a concurrency slot instead of dropping the request outright — calling
+    // two queues to different channels back-to-back (or a post-call prewarm still running)
+    // can easily occupy both Edge slots; without this wait, a call landing at that exact
+    // moment used to throw immediately with no SAPI available (host audio off) and no
+    // edgePromise to retry from, so its announcement was silently lost.
+    const waitStart = Date.now()
+    while (_edgeTtsActive >= EDGE_TTS_MAX_CONCURRENT && Date.now() - waitStart < 6000) {
+      await new Promise(r => setTimeout(r, 150))
+    }
+
     if (_edgeTtsActive < EDGE_TTS_MAX_CONCURRENT) {
       _edgeTtsActive++
       const edgePromise = generateEdgeTTS(text, edgeVoice, rate)
@@ -540,9 +551,8 @@ async function generateServerTTS(text, voiceName, rate) {
       } finally {
         _edgeTtsActive--
       }
-    } else {
-      console.warn('[TTS] Edge at capacity, using SAPI directly')
     }
+    console.warn('[TTS] Edge still at capacity after waiting, using SAPI directly')
     if (sapiPromise) {
       const sapiUrl = await sapiPromise
       if (sapiUrl) return sapiUrl
@@ -1307,7 +1317,7 @@ app.post('/api/queue/call', async (req, res) => {
             .catch(() => {})
         }
         const doBroadcastAndPrewarm = (audioUrl) => {
-          broadcast({ type: 'queue:audio', data: { audioUrl, displayConfigId: displayConfigId || null, department } })
+          broadcast({ type: 'queue:audio', data: { audioUrl, displayConfigId: displayConfigId || null, department, servicePoint: String(servicePoint), queueNo: displayNo } })
           try {
             const isNetworkVoice = EDGE_VOICES.some(v => v.name === voiceName) || GOOGLE_VOICES.some(v => v.name === voiceName) || !voiceName
             const prewarmEdgeVoice = isNetworkVoice ? (voiceName || 'th-TH-AcharaNeural') : null
