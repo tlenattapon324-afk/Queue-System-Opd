@@ -10,6 +10,17 @@ import './QueueDisplay.css'
 
 interface QDConfig {
   title: string
+  // Layout variant
+  layout: 'table' | 'callboard'
+  showUpcoming: boolean
+  upcomingCount: number
+  cbFontSize1: number // ขนาดตัวอักษร ส่วนที่ 1 (บล็อกคิวปัจจุบัน)
+  cbFontSize2: number // ขนาดตัวอักษร ส่วนที่ 2 (ช่องบริการ)
+  cbBg1: string // สีพื้นหลัง ส่วนที่ 1
+  cbBg2: string // สีพื้นหลัง ส่วนที่ 2
+  cbSpFontSize2: number // ขนาดตัวอักษรกล่อง "ช่อง" ในส่วนที่ 2 (แยกจาก spFontSize ของจอตาราง)
+  cbHeader1: string // หัวคอลัมน์ ส่วนที่ 1 (พิมพ์ข้อความเองได้)
+  upcomingQueueMode: 'slot' | 'opd' | 'cur_dep' | 'slot_cur' // ประเภทคิวที่ใช้ดึงรายการคิวถัดไป (ส่วนที่ 4)
   // Header
   headerBg: string
   headerTextColor: string
@@ -90,6 +101,16 @@ interface QDConfig {
 
 const DEFAULT: QDConfig = {
   title: 'ระบบคิวผู้ป่วยนอก',
+  layout: 'table',
+  showUpcoming: false,
+  upcomingCount: 5,
+  cbFontSize1: 10,
+  cbFontSize2: 4.5,
+  cbBg1: '#ffffff',
+  cbBg2: '#ffffff',
+  cbSpFontSize2: 1.6,
+  cbHeader1: 'คิวที่กำลังเรียก',
+  upcomingQueueMode: 'slot',
   headerBg: '#1a237e',
   headerTextColor: '#ffffff',
   showClock: true,
@@ -182,6 +203,15 @@ function fixConfig(merged: Record<string, unknown>): QDConfig {
   if (typeof result.numColumns !== 'number' || result.numColumns < 1) result.numColumns = 1
   if (typeof result.spColumns !== 'object' || Array.isArray(result.spColumns)) result.spColumns = {}
   if (typeof result.spRows !== 'object' || Array.isArray(result.spRows)) result.spRows = {}
+  if (result.layout !== 'table' && result.layout !== 'callboard') result.layout = 'table'
+  if (typeof result.upcomingCount !== 'number' || result.upcomingCount < 1) result.upcomingCount = DEFAULT.upcomingCount
+  if (typeof result.cbFontSize1 !== 'number' || result.cbFontSize1 <= 0) result.cbFontSize1 = DEFAULT.cbFontSize1
+  if (typeof result.cbFontSize2 !== 'number' || result.cbFontSize2 <= 0) result.cbFontSize2 = DEFAULT.cbFontSize2
+  if (typeof result.cbBg1 !== 'string' || !result.cbBg1) result.cbBg1 = DEFAULT.cbBg1
+  if (typeof result.cbBg2 !== 'string' || !result.cbBg2) result.cbBg2 = DEFAULT.cbBg2
+  if (typeof result.cbSpFontSize2 !== 'number' || result.cbSpFontSize2 <= 0) result.cbSpFontSize2 = DEFAULT.cbSpFontSize2
+  if (typeof result.cbHeader1 !== 'string') result.cbHeader1 = DEFAULT.cbHeader1
+  if (!['slot', 'opd', 'cur_dep', 'slot_cur'].includes(result.upcomingQueueMode)) result.upcomingQueueMode = DEFAULT.upcomingQueueMode
   return result
 }
 
@@ -208,6 +238,37 @@ function nameForTTS(fullName: string): string {
   return fullName || ''
 }
 
+// Callboard layout: shrink font size for longer queue codes so they don't overflow
+// their (narrower, screen-shared) box — unlike the table layout's full-width cell.
+function fitQueueFontSize(text: string, baseVw: number): number {
+  const len = text.length || 1
+  return len <= 3 ? baseVw : Math.max(baseVw * (3 / len), baseVw * 0.45)
+}
+
+// Callboard "upcoming" list (ส่วนที่ 4): scope to the selected room(s), falling back to the
+// department of whatever was last called if none is explicitly selected — otherwise every
+// department's oqueue sequence gets merged into one ranking and a department with naturally
+// low numbers (e.g. pharmacy starting at 1) permanently outranks the room being worked right
+// now. For opd/cur_dep modes, sort by ovst.oqueue (numeric) — matching the queue-call page —
+// not by arrival time, and without grouping by department first (which is what pins a
+// department-less queue to the top forever).
+function computeUpcomingQueues(cfg: QDConfig, data: QueueItem[], lastCalledDept: string | undefined): QueueItem[] {
+  const scopeDepts = cfg.filterDepts.length > 0 ? cfg.filterDepts : (lastCalledDept ? [lastCalledDept] : [])
+  const list = data
+    .filter(q => q.status === 'waiting' || !q.status)
+    // Once a room scope is active (explicit or auto from the last call), a queue with no
+    // department at all doesn't belong to it — don't let it slip through as an exception.
+    .filter(q => scopeDepts.length === 0 || (!!q.department && scopeDepts.includes(q.department)))
+  if (cfg.upcomingQueueMode === 'opd' || cfg.upcomingQueueMode === 'cur_dep') {
+    list.sort((a, b) => {
+      const na = Number(a.queue_no), nb = Number(b.queue_no)
+      if (!Number.isNaN(na) && !Number.isNaN(nb) && na !== nb) return na - nb
+      return String(a.queue_no || '').localeCompare(String(b.queue_no || ''))
+    })
+  }
+  return list
+}
+
 export default function QueueDisplayPage() {
   const [config, setConfig] = useState<QDConfig>(() => {
     // localStorage — always use saved settings
@@ -226,6 +287,11 @@ export default function QueueDisplayPage() {
   // Track call order — most recently called SP moves to top of display
   const [spCallOrder, setSpCallOrder] = useState<string[]>([])
   const [noShowQueues, setNoShowQueues] = useState<CallEntry[]>([])
+  // Callboard layout: most recently called queue (across all channels) + upcoming/waiting preview
+  const [lastCalled, setLastCalled] = useState<{ sp: string; queueNo: string; queueName: string; department?: string; animKey: number } | null>(null)
+  const lastCalledRef = useRef(lastCalled)
+  useEffect(() => { lastCalledRef.current = lastCalled }, [lastCalled])
+  const [waitingQueues, setWaitingQueues] = useState<QueueItem[]>([])
   const [clock, setClock] = useState(new Date())
   const [showSettings, setShowSettings] = useState(false)
   const [systemFonts, setSystemFonts] = useState<string[]>([])
@@ -239,7 +305,7 @@ export default function QueueDisplayPage() {
   const audioCtx = useRef<AudioContext | null>(null)
   // Display update buffered from queue:called — applied just before audio plays (sync display+audio)
   const pendingDisplayRef = useRef<Array<{sp:string; queueNo:string; queueName:string; displayConfigId?:string|null; department?:string}>>([])
-  const audioQueue = useRef<Array<{ url: string; volume: number; display?: {sp:string; queueNo:string; queueName:string} }>>([])
+  const audioQueue = useRef<Array<{ url: string; volume: number; display?: {sp:string; queueNo:string; queueName:string; department?:string} }>>([])
   const audioPlaying = useRef(false)
   const audioGeneration = useRef(0)
   // Single reusable element — avoids Android WebView's ~12 HTMLAudioElement per-page hard limit
@@ -250,6 +316,9 @@ export default function QueueDisplayPage() {
   const browserTtsPlayedForCall = useRef(false)
   const isResizing = useRef(false)
   const configRef = useRef(config)
+  // Snapshot of the last-saved config — restored if the settings panel is closed without saving
+  // (e.g. toggling layout table↔callboard to preview, then closing with ✕ instead of บันทึก)
+  const savedConfigSnapshot = useRef<QDConfig | null>(null)
   const [ttsVoices, setTtsVoices] = useState<SpeechSynthesisVoice[]>([])
   const [serverTtsVoices, setServerTtsVoices] = useState<string[]>([])
   const [loadingVoices, setLoadingVoices] = useState(false)
@@ -340,7 +409,11 @@ export default function QueueDisplayPage() {
     const loader = URL_DISPLAY_ID ? getDisplayQDConfig(URL_DISPLAY_ID) : getQDDefaultConfig()
     loader.then(serverCfg => {
       if (!serverCfg) return
-      setConfig(c => ({ ...fixConfig(serverCfg), displayConfigId: c.displayConfigId, displayConfigName: c.displayConfigName, displayChannels: c.displayChannels }))
+      setConfig(c => {
+        const merged = { ...fixConfig(serverCfg), displayConfigId: c.displayConfigId, displayConfigName: c.displayConfigName, displayChannels: c.displayChannels }
+        savedConfigSnapshot.current = merged
+        return merged
+      })
     })
   }, [showSettings]) // eslint-disable-line react-hooks/exhaustive-deps
 
@@ -395,17 +468,18 @@ export default function QueueDisplayPage() {
   // Poll no-show queues every 15s + load available depts
   useEffect(() => {
     const refresh = async () => {
+      const cfg = configRef.current
       const [calls, queueRes] = await Promise.all([
         getCallsToday(),
-        getQueueList().catch(() => ({ success: false, data: [] }))
+        getQueueList(cfg.upcomingQueueMode).catch(() => ({ success: false, data: [] }))
       ])
       setNoShowQueues(calls.filter((c: CallEntry) => c.status === 'skip'))
       if (queueRes.success) {
+        const waitingAll = computeUpcomingQueues(cfg, queueRes.data, lastCalledRef.current?.department)
+        setWaitingQueues(waitingAll)
         // Prewarm Edge TTS for upcoming queues × visible channels — eliminates delay on first call
-        const cfg = configRef.current
         if (cfg.ttsEnabled && cfg.ttsSource === 'server') {
-          const waiting = queueRes.data
-            .filter((q: QueueItem) => q.status === 'waiting' || !q.status)
+          const waiting = waitingAll
             .slice(0, 3)
             .map((q: QueueItem) => ({ no: q.queue_slot || String(q.queue_no), name: q.queue_name }))
           if (waiting.length > 0) {
@@ -476,6 +550,7 @@ export default function QueueDisplayPage() {
               setSpQueues(prev => ({ ...prev, [pd.sp]: pd.queueNo }))
               setSpNames(prev => ({ ...prev, [pd.sp]: pd.queueName }))
               setRowAnimKeys(prev => ({ ...prev, [pd.sp]: (prev[pd.sp] || 0) + 1 }))
+              setLastCalled({ sp: pd.sp, queueNo: pd.queueNo, queueName: pd.queueName, department: pd.department, animKey: Date.now() })
             }
             playTTS(snapData.queueNo, snapData.servicePoint, snapCfg, (snapData as any).queueName)
           }
@@ -485,6 +560,7 @@ export default function QueueDisplayPage() {
         setSpQueues(prev => ({ ...prev, [data.servicePoint]: data.queueNo }))
         setSpNames(prev => ({ ...prev, [data.servicePoint]: (data as any).queueName || '' }))
         setRowAnimKeys(prev => ({ ...prev, [data.servicePoint]: (prev[data.servicePoint] || 0) + 1 }))
+        setLastCalled({ sp: data.servicePoint, queueNo: data.queueNo, queueName: (data as any).queueName || '', department: (data as any).department, animKey: Date.now() })
         if (cfg.blinkEnabled) {
           const sp = data.servicePoint
           clearTimeout(blinkTimers.current[sp])
@@ -499,7 +575,13 @@ export default function QueueDisplayPage() {
           playBeep()
         }
       }
-      setTimeout(() => getCallsToday().then(c => setNoShowQueues(c.filter((x: CallEntry) => x.status === 'skip'))), 800)
+      setTimeout(() => {
+        getCallsToday().then(c => setNoShowQueues(c.filter((x: CallEntry) => x.status === 'skip')))
+        getQueueList(cfg.upcomingQueueMode).then(r => {
+          if (!r.success) return
+          setWaitingQueues(computeUpcomingQueues(cfg, r.data, lastCalledRef.current?.department))
+        }).catch(() => {})
+      }, 800)
     })
     return off
   }, []) // eslint-disable-line react-hooks/exhaustive-deps
@@ -622,10 +704,11 @@ export default function QueueDisplayPage() {
       const item = audioQueue.current.shift()!
       // Apply display update BEFORE playing audio — ensures display shows new queue as announcement starts
       if (item.display) {
-        const { sp, queueNo, queueName } = item.display
+        const { sp, queueNo, queueName, department } = item.display
         setSpQueues(prev => ({ ...prev, [sp]: queueNo }))
         setSpNames(prev => ({ ...prev, [sp]: queueName }))
         setRowAnimKeys(prev => ({ ...prev, [sp]: (prev[sp] || 0) + 1 }))
+        setLastCalled({ sp, queueNo, queueName, department, animKey: Date.now() })
         if (configRef.current.blinkEnabled) {
           clearTimeout(blinkTimers.current[sp])
           setBlinkingSPs(prev => new Set([...prev, sp]))
@@ -648,7 +731,7 @@ export default function QueueDisplayPage() {
     }
   }
 
-  const enqueueAudio = (url: string, volume: number, display?: {sp:string; queueNo:string; queueName:string}) => {
+  const enqueueAudio = (url: string, volume: number, display?: {sp:string; queueNo:string; queueName:string; department?:string}) => {
     audioQueue.current.push({ url, volume, display })
     drainAudioQueue(audioGeneration.current)
   }
@@ -665,14 +748,17 @@ export default function QueueDisplayPage() {
       // Pop matching pending display update (FIFO — paired with this audio)
       const pending = pendingDisplayRef.current.shift()
       // Enqueue audio + display update — drain applies display then plays audio in order
-      enqueueAudio(data.audioUrl, cfg.ttsVolume ?? 1, pending ? { sp: pending.sp, queueNo: pending.queueNo, queueName: pending.queueName } : undefined)
+      enqueueAudio(data.audioUrl, cfg.ttsVolume ?? 1, pending ? { sp: pending.sp, queueNo: pending.queueNo, queueName: pending.queueName, department: pending.department } : undefined)
     })
     return off
   }, []) // eslint-disable-line react-hooks/exhaustive-deps
 
-  // Display config broadcast (from admin panel)
+  // Display config broadcast — only global default displays (no ?id=) should react to this;
+  // per-display screens have their own isolated config (loaded/saved via qd-config/:id) and must
+  // not be overwritten by another screen's global-default save.
   useEffect(() => {
     const off = onDisplayConfig(cfg => {
+      if (configRef.current.displayConfigId) return
       setConfig(c => ({ ...c, ...(cfg as Partial<QDConfig>) }))
     })
     return off
@@ -686,6 +772,7 @@ export default function QueueDisplayPage() {
       if (data.displayConfigId && cfg.displayConfigId && data.displayConfigId !== cfg.displayConfigId) return
       setSpQueues({})
       setSpNames({})
+      setLastCalled(null)
     })
     return off
   }, []) // eslint-disable-line react-hooks/exhaustive-deps
@@ -788,6 +875,7 @@ export default function QueueDisplayPage() {
       await saveQDDefaultConfig(config)
       updateDisplayConfig(config as unknown as DisplayConfig)
     }
+    savedConfigSnapshot.current = config
     setShowSettings(false)
   }
 
@@ -799,13 +887,26 @@ export default function QueueDisplayPage() {
       await saveQDDefaultConfig(config)
       setSaveDefaultMsg('บันทึกเป็นค่าเริ่มต้นสำเร็จ ✓')
     }
+    savedConfigSnapshot.current = config
     setTimeout(() => setSaveDefaultMsg(null), 2500)
   }
 
-  // Derived: use display-specific channels if this display has an ID, otherwise global SPs
-  const visibleSPs = config.displayConfigId && config.displayChannels.length > 0
+  // ปิดตั้งค่าโดยไม่บันทึก — คืนค่ากลับไปเป็นค่าที่บันทึกไว้ล่าสุด (กันกรณีลองสลับ
+  // เลย์เอาต์ตาราง/บอร์ดเรียกคิวไปมาเพื่อดูตัวอย่าง แล้วปิดโดยไม่ได้กดบันทึก)
+  const closeSettingsWithoutSaving = () => {
+    if (savedConfigSnapshot.current) {
+      const snap = savedConfigSnapshot.current
+      setConfig(c => ({ ...snap, displayConfigId: c.displayConfigId, displayConfigName: c.displayConfigName, displayChannels: c.displayChannels }))
+    }
+    setShowSettings(false)
+  }
+
+  // Derived: use display-specific channels if this display has an ID, otherwise global SPs —
+  // either way, apply hiddenSPs (เปิด/ปิด toggle) so a turned-off channel never renders
+  const baseSPs = config.displayConfigId && config.displayChannels.length > 0
     ? config.displayChannels.map(ch => ({ id: ch, name: ch }))
-    : servicePoints.filter(sp => !config.hiddenSPs.includes(sp.id) && !config.hiddenSPs.includes(sp.name))
+    : servicePoints
+  const visibleSPs = baseSPs.filter(sp => !config.hiddenSPs.includes(sp.id) && !config.hiddenSPs.includes(sp.name))
 
   const toggleFilterDept = (dept: string) =>
     setConfig(c => ({
@@ -905,6 +1006,116 @@ export default function QueueDisplayPage() {
     </div>
   )
 
+  // ─── Callboard layout: big "currently called" block + per-channel rows + upcoming preview ───
+  // ส่วนที่ 1/2 มีขนาดตัวอักษรแยกกัน (cbFontSize1/cbFontSize2) และทุกส่วนเว้นช่องไฟระหว่างกัน
+  const renderCallboard = () => {
+    const cbIsBlinking = config.blinkEnabled && !!lastCalled && blinkingSPs.has(lastCalled.sp)
+    const cbRawName = lastCalled && config.ttsShowName ? lastCalled.queueName : ''
+    const cbPatientName = cbRawName && config.maskLastName ? maskName(cbRawName) : cbRawName
+    const cbBadge = lastCalled?.queueNo ? extractBadge(lastCalled.queueNo) : null
+    const upcoming = waitingQueues.slice(0, config.upcomingCount)
+
+    return (
+      <div className="qd-cb-wrap">
+        <div className="qd-cb-left">
+          <div className="qd-cb1-thead" style={{ background: config.tableHeaderBg, color: config.tableHeaderColor }}>
+            {config.cbHeader1}
+          </div>
+          <div className="qd-cb-big" style={{
+            background: config.cbBg1,
+            border: `${config.borderWidth}px solid ${config.borderColor}`,
+            ...(cbIsBlinking ? {
+              animation: `qd-blink-anim-cb1 ${config.blinkSpeed}ms step-end ${config.blinkCount}`,
+            } as React.CSSProperties : {})
+          }}>
+            {lastCalled?.queueNo ? (
+              <div key={`cb-${lastCalled.animKey}`} className={`qd-cb-big-cell ${animClass}`}>
+                {cbBadge && <span className="qd-badge qd-cb-badge">{cbBadge}</span>}
+                <span className="qd-cb-queue-no" style={{ color: config.queueColor, fontSize: `${fitQueueFontSize(lastCalled.queueNo, config.cbFontSize1)}vw` }}>
+                  {lastCalled.queueNo}
+                </span>
+                {cbPatientName && (
+                  <span className="qd-cb-patient-name" style={{ color: config.queueColor }}>{cbPatientName}</span>
+                )}
+                <span className="qd-cb-sp-label" style={{ background: config.tableHeaderBg, color: config.tableHeaderColor }}>
+                  ช่อง {lastCalled.sp}
+                </span>
+              </div>
+            ) : (
+              <span className="qd-dash qd-cb-dash">รอเรียกคิว</span>
+            )}
+          </div>
+
+          {config.showUpcoming && (
+            <div className="qd-cb-upcoming" style={{ background: config.rightPanelBg }}>
+              <div className="qd-cb-upcoming-hd" style={{ background: config.rightPanelHeaderBg, color: config.rightPanelHeaderColor }}>
+                คิวถัดไป
+              </div>
+              <div className="qd-cb-upcoming-list">
+                {upcoming.length === 0 ? (
+                  <span className="qd-cb-upcoming-empty">— ไม่มีคิวรอ —</span>
+                ) : upcoming.map(q => (
+                  <div key={q.vn} className="qd-cb-upcoming-item" style={{ borderColor: config.borderColor }}>
+                    <span className="qd-cb-upcoming-no">{q.queue_slot || q.queue_no}</span>
+                    {q.department && <span className="qd-cb-upcoming-dept">{q.department}</span>}
+                  </div>
+                ))}
+              </div>
+            </div>
+          )}
+        </div>
+
+        {/* ส่วนที่ 2: ช่องบริการ — หัวคอลัมน์ + แถวแยกกล่อง "ช่อง" กับ "คิว" เป็นสี่เหลี่ยมขอบมน เว้นช่องไฟ ~2mm */}
+        <div className="qd-cb2-col" style={{ position: 'relative' }}>
+          <div className="qd-col-resizer" style={{ left: config.spColumnWidth }} onMouseDown={startResize} title="ลากเพื่อปรับความกว้าง" />
+          <div className="qd-cb2-thead">
+            <div className="qd-cb2-th-sp" style={{ width: config.spColumnWidth, minWidth: config.spColumnWidth, background: config.spHeaderBg, color: config.spHeaderColor }}>
+              {config.colSpHeader}
+            </div>
+            <div className="qd-cb2-th-queue" style={{ background: config.tableHeaderBg, color: config.tableHeaderColor }}>
+              {config.colQueueHeader}
+            </div>
+          </div>
+          <div className="qd-cb2-wrap">
+            {visibleSPs.length === 0 ? (
+              <div className="qd-empty">{servicePoints.length === 0 ? 'กำลังโหลด...' : '—'}</div>
+            ) : visibleSPs.map(sp => {
+              const displayName = config.spDisplayNames[sp.id] || config.spDisplayNames[sp.name] || sp.name
+              const queueNo = spQueues[sp.name] || spQueues[sp.id] || ''
+              const rowKey = rowAnimKeys[sp.name] || rowAnimKeys[sp.id] || 0
+              const chIsBlinking = config.blinkEnabled && !!queueNo && (blinkingSPs.has(sp.name) || blinkingSPs.has(sp.id))
+              const qn2FontSize = queueNo ? fitQueueFontSize(queueNo, config.cbFontSize2) : config.cbFontSize2 * 0.6
+              const boxBorder = `${config.borderWidth}px solid ${config.borderColor}`
+              return (
+                <div key={sp.id} className="qd-cb2-row">
+                  <div className="qd-cb2-sp-box" style={{
+                    width: config.spColumnWidth, minWidth: config.spColumnWidth,
+                    background: config.spColumnBg, color: config.spColumnColor,
+                    border: boxBorder, fontSize: `${config.cbSpFontSize2}vw`,
+                  }}>
+                    {displayName}
+                  </div>
+                  <div className="qd-cb2-queue-box" style={{
+                    background: config.cbBg2,
+                    border: boxBorder,
+                    ...(chIsBlinking ? {
+                      animation: `qd-blink-anim-cb2 ${config.blinkSpeed}ms step-end ${config.blinkCount}`,
+                    } as React.CSSProperties : {})
+                  }}>
+                    <div key={`ch-${rowKey}`} className={`qd-cb2-queue-no ${animClass}`}
+                      style={{ color: config.queueColor, fontSize: `${qn2FontSize}vw` }}>
+                      {queueNo || <span className="qd-dash" style={{ fontSize: 'inherit' }}>—</span>}
+                    </div>
+                  </div>
+                </div>
+              )
+            })}
+          </div>
+        </div>
+      </div>
+    )
+  }
+
   // แบ่ง visibleSPs ตาม spColumns แล้ว sort ตาม spRows
   const columnGroups: (typeof visibleSPs)[] = Array.from({ length: config.numColumns }, () => [])
   visibleSPs.forEach(sp => {
@@ -922,8 +1133,13 @@ export default function QueueDisplayPage() {
 
   return (
     <div className="qd-root" style={{ fontFamily: fontFace }}>
-      {/* Inject actual blink colors — var() in @keyframes not supported on Android WebView */}
-      <style>{`@keyframes qd-blink-anim { 0%,100%{background-color:${config.blinkColor};} 50%{background-color:${config.queueBg};} }`}</style>
+      {/* Inject actual blink colors — var() in @keyframes not supported on Android WebView.
+          Callboard's ส่วนที่ 1/2 have independent backgrounds (cbBg1/cbBg2), so each needs its own keyframe. */}
+      <style>{`
+        @keyframes qd-blink-anim { 0%,100%{background-color:${config.blinkColor};} 50%{background-color:${config.queueBg};} }
+        @keyframes qd-blink-anim-cb1 { 0%,100%{background-color:${config.blinkColor};} 50%{background-color:${config.cbBg1};} }
+        @keyframes qd-blink-anim-cb2 { 0%,100%{background-color:${config.blinkColor};} 50%{background-color:${config.cbBg2};} }
+      `}</style>
 
       {/* ─── HEADER ──────────────────────────────────────────── */}
       <header className="qd-header" style={{ background: config.headerBg, color: config.headerTextColor }}>
@@ -967,10 +1183,12 @@ export default function QueueDisplayPage() {
       </header>
 
       {/* ─── BODY ────────────────────────────────────────────── */}
-      <div className="qd-body">
+      <div className={`qd-body${config.layout === 'callboard' ? ' qd-body-callboard' : ''}`}>
 
-        {/* ── Columns ────────────────────────────────────────── */}
-        {columnGroups.map((sps, colIdx) => renderColumn(sps, colIdx))}
+        {/* ── Main content: table columns or callboard ─────────── */}
+        {config.layout === 'callboard'
+          ? renderCallboard()
+          : columnGroups.map((sps, colIdx) => renderColumn(sps, colIdx))}
 
         {/* ── Right panel: เรียกแล้วไม่มา ──────────────────── */}
         {config.showNoShowPanel && <div
@@ -1024,9 +1242,88 @@ export default function QueueDisplayPage() {
           <div className="qd-panel" onClick={e => e.stopPropagation()} style={{ fontFamily: fontFace }}>
             <div className="qd-panel-hd">
               <h3>⚙ ตั้งค่าการแสดงผล</h3>
-              <button className="qd-panel-close" onClick={() => setShowSettings(false)}>✕</button>
+              <button className="qd-panel-close" onClick={closeSettingsWithoutSaving}>✕</button>
             </div>
             <div className="qd-panel-body">
+
+              {/* ── รูปแบบจอแสดงผล ── */}
+              <SSec>รูปแบบจอแสดงผล</SSec>
+              <SRow label="เลย์เอาต์">
+                <div className="qd-radio-group">
+                  <label className="qd-radio-label">
+                    <input type="radio" name="qd-layout" value="table"
+                      checked={config.layout === 'table'}
+                      onChange={() => setConfig(c => ({ ...c, layout: 'table' }))} />
+                    ตาราง
+                  </label>
+                  <label className="qd-radio-label">
+                    <input type="radio" name="qd-layout" value="callboard"
+                      checked={config.layout === 'callboard'}
+                      onChange={() => setConfig(c => ({ ...c, layout: 'callboard' }))} />
+                    บอร์ดเรียกคิว
+                  </label>
+                </div>
+              </SRow>
+              {config.layout === 'callboard' && <>
+                <SRow label="หัวคอลัมน์ ส่วนที่ 1">
+                  <input className="input" value={config.cbHeader1}
+                    placeholder="เช่น คิวที่กำลังเรียก"
+                    onChange={e => setConfig(c => ({ ...c, cbHeader1: e.target.value }))} />
+                </SRow>
+                <SRow label="สีพื้นหลัง ส่วนที่ 1 (คิวปัจจุบัน)">
+                  <CInput value={config.cbBg1} onChange={v => setConfig(c => ({ ...c, cbBg1: v }))} />
+                </SRow>
+                <SRow label={`ขนาดตัวอักษร ส่วนที่ 1 (คิวปัจจุบัน): ${config.cbFontSize1}vw`}>
+                  <input type="range" min="4" max="22" step="0.5" value={config.cbFontSize1}
+                    onChange={e => setConfig(c => ({ ...c, cbFontSize1: Number(e.target.value) }))}
+                    className="qd-slider" />
+                </SRow>
+                <SRow label="สีพื้นหลัง ส่วนที่ 2 (ช่องบริการ)">
+                  <CInput value={config.cbBg2} onChange={v => setConfig(c => ({ ...c, cbBg2: v }))} />
+                </SRow>
+                <SRow label={`ขนาดตัวอักษร ส่วนที่ 2 (ช่องบริการ): ${config.cbFontSize2}vw`}>
+                  <input type="range" min="2" max="12" step="0.5" value={config.cbFontSize2}
+                    onChange={e => setConfig(c => ({ ...c, cbFontSize2: Number(e.target.value) }))}
+                    className="qd-slider" />
+                </SRow>
+                <SRow label={`ขนาดตัวอักษร กล่อง "ช่อง" ส่วนที่ 2: ${config.cbSpFontSize2}vw`} hint="แยกจากขนาดตัวอักษรช่องเรียกของจอตาราง">
+                  <input type="range" min="0.5" max="8" step="0.1" value={config.cbSpFontSize2}
+                    onChange={e => setConfig(c => ({ ...c, cbSpFontSize2: Number(e.target.value) }))}
+                    className="qd-slider" />
+                </SRow>
+                <SRow label="แสดงคิวที่รอถัดไป">
+                  <Tog checked={config.showUpcoming} onChange={v => setConfig(c => ({ ...c, showUpcoming: v }))} />
+                </SRow>
+                {config.showUpcoming && (<>
+                  <SRow label="ประเภทคิว (ดึงคิวถัดไปตามโหมดนี้)">
+                    <div className="qd-radio-group">
+                      {([
+                        ['slot', 'Queue_Prefix'],
+                        ['slot_cur', 'Queue_Prefix_Room'],
+                        ['opd', 'Queue_OPD'],
+                        ['cur_dep', 'Queue_OPD_Room'],
+                      ] as const).map(([val, label]) => (
+                        <label key={val} className="qd-radio-label">
+                          <input type="radio" name="qd-upcoming-mode" value={val}
+                            checked={config.upcomingQueueMode === val}
+                            onChange={() => setConfig(c => ({ ...c, upcomingQueueMode: val }))} />
+                          {label}
+                        </label>
+                      ))}
+                    </div>
+                  </SRow>
+                  <SRow label={`จำนวนคิวที่แสดง: ${config.upcomingCount} คิว`}>
+                    <input type="range" min="1" max="15" step="1" value={config.upcomingCount}
+                      onChange={e => setConfig(c => ({ ...c, upcomingCount: Number(e.target.value) }))}
+                      className="qd-slider" />
+                  </SRow>
+                  <SRow label="ห้องตรวจที่จะดึงคิวถัดไป">
+                    <span style={{ fontSize: 12, color: 'rgba(255,255,255,0.5)' }}>
+                      {config.filterDepts.length === 0 ? 'ทุกห้องตรวจ' : `${config.filterDepts.length} ห้องตรวจ (ตามรายการ "กรองแผนกที่แสดง" ด้านล่าง)`}
+                    </span>
+                  </SRow>
+                </>)}
+              </>}
 
               {/* ── ทั่วไป ── */}
               <SSec>ข้อมูลจุดบริการ (แสดงบนจอนี้)</SSec>
@@ -1158,11 +1455,12 @@ export default function QueueDisplayPage() {
               </SRow>
 
               {/* ── ช่องบริการ ── */}
+              {/* ใช้ baseSPs (ทุกช่อง ไม่กรอง hiddenSPs) ไม่งั้นช่องที่ปิดไว้จะหายจากลิสต์นี้ไปด้วย เปิดกลับไม่ได้ */}
               <SSec>ช่องบริการ (เปิด/ปิด + ชื่อที่แสดง{config.numColumns > 1 ? ' + คอลัมน์ (ฟ้า) + แถว (เขียว)' : ''})</SSec>
-              {visibleSPs.length === 0 ? (
+              {baseSPs.length === 0 ? (
                 <div style={{ fontSize: 13, color: 'rgba(255,255,255,0.4)', padding: '4px 0' }}>ยังไม่มีช่องบริการ</div>
               ) : (
-                visibleSPs.map(sp => {
+                baseSPs.map(sp => {
                   const isVisible = !config.hiddenSPs.includes(sp.id) && !config.hiddenSPs.includes(sp.name)
                   const displayName = config.spDisplayNames[sp.id] || ''
                   const colVal = config.spColumns[sp.id] ?? config.spColumns[sp.name] ?? 1

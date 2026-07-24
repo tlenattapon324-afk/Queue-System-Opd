@@ -101,6 +101,8 @@
   overflow: hidden;
   min-height: 0;
 }
+/* บอร์ดเรียกคิว: เว้นช่องไฟระหว่างส่วนที่ 2 (ช่องบริการ) กับส่วนที่ 3 (เรียกแล้วไม่มา) */
+.qd-body-callboard { gap: 14px; padding: 10px; }
 
 /* ─── Main table area ────────────────────────────────────────── */
 .qd-main {
@@ -268,6 +270,206 @@
   color: #999;
 }
 
+/* ─── Callboard layout ───────────────────────────────────────────
+   ส่วนที่ 1 (qd-cb-big) + ส่วนที่ 4 (qd-cb-upcoming) อยู่ฝั่งซ้าย (qd-cb-left)
+   ส่วนที่ 2 (qd-cb2-wrap) อยู่ฝั่งขวา ถัดไปเป็นส่วนที่ 3 (.qd-right ของเดิม)
+   ทุกส่วนเว้นช่องไฟ (gap) ระหว่างกัน แทนเส้นขอบชนกัน
+──────────────────────────────────────────────────────────────── */
+.qd-cb-wrap {
+  flex: 1;
+  display: flex;
+  gap: 12mm;
+  overflow: hidden;
+  min-width: 0;
+  min-height: 0;
+}
+.qd-cb-left {
+  flex: 1.3;
+  display: flex;
+  flex-direction: column;
+  gap: 14px;
+  min-width: 0;
+  min-height: 0;
+  overflow: hidden;
+}
+.qd-cb1-thead {
+  flex-shrink: 0;
+  display: flex;
+  align-items: center;
+  justify-content: center;
+  font-size: 20px;
+  font-weight: 700;
+  padding: 12px 16px;
+  margin-top: 2mm;
+  border-radius: 14px;
+}
+.qd-cb-big {
+  flex: 1;
+  display: flex;
+  align-items: center;
+  justify-content: center;
+  min-height: 0;
+  overflow: hidden;
+  border-radius: 16px;
+}
+.qd-cb-big-cell {
+  display: flex;
+  flex-direction: column;
+  align-items: center;
+  gap: 10px;
+  max-width: 100%;
+  padding: 0 16px;
+  overflow: hidden;
+}
+.qd-cb-badge { min-width: 44px; height: 44px; font-size: 22px; border-radius: 10px; }
+.qd-cb-queue-no {
+  font-weight: 900;
+  line-height: 1;
+  letter-spacing: -2px;
+  max-width: 100%;
+  white-space: nowrap;
+}
+.qd-cb-patient-name {
+  font-weight: 800;
+  font-size: 2.6vw;
+  letter-spacing: -0.3px;
+  text-align: center;
+}
+.qd-cb-sp-label {
+  margin-top: 6px;
+  padding: 6px 20px;
+  border-radius: 999px;
+  font-size: 1.4vw;
+  font-weight: 700;
+}
+.qd-cb-dash {
+  font-size: 3.5vw;
+  color: #ccc;
+  font-weight: 700;
+}
+
+.qd-cb-upcoming {
+  flex-shrink: 0;
+  max-height: 26%;
+  display: flex;
+  flex-direction: column;
+  border-radius: 16px;
+  overflow: hidden;
+}
+.qd-cb-upcoming-hd {
+  flex-shrink: 0;
+  padding: 8px 14px;
+  font-size: 16px;
+  font-weight: 700;
+}
+.qd-cb-upcoming-list {
+  flex: 1;
+  display: flex;
+  align-items: center;
+  gap: 12px;
+  padding: 10px 14px;
+  overflow-x: auto;
+  overflow-y: hidden;
+}
+.qd-cb-upcoming-item {
+  flex-shrink: 0;
+  display: flex;
+  flex-direction: column;
+  align-items: center;
+  gap: 2px;
+  padding: 8px 16px;
+  border: 2px solid;
+  border-radius: 10px;
+  min-width: 90px;
+}
+.qd-cb-upcoming-no { font-size: 22px; font-weight: 900; }
+.qd-cb-upcoming-dept { font-size: 11px; opacity: 0.65; white-space: nowrap; overflow: hidden; text-overflow: ellipsis; max-width: 120px; }
+.qd-cb-upcoming-empty { font-size: 14px; opacity: 0.5; padding: 0 14px; }
+
+/* ส่วนที่ 2: ช่องบริการ — หัวคอลัมน์ + แต่ละแถวแยกกล่อง "ช่อง" กับ "คิว" เป็นสี่เหลี่ยมขอบมน เว้นช่องไฟ ~2mm */
+.qd-cb2-col {
+  flex: 1;
+  display: flex;
+  flex-direction: column;
+  min-width: 0;
+  min-height: 0;
+  overflow: hidden;
+}
+.qd-cb2-thead {
+  display: flex;
+  flex-shrink: 0;
+  gap: 2mm;
+  margin: 2mm 2mm 0;
+  border: none;
+}
+.qd-cb2-th-sp {
+  flex-shrink: 0;
+  display: flex;
+  align-items: center;
+  justify-content: center;
+  font-size: 20px;
+  font-weight: 700;
+  padding: 12px 10px;
+  border: none;
+  border-radius: 14px;
+  transition: width 0.15s, min-width 0.15s;
+}
+.qd-cb2-th-queue {
+  flex: 1;
+  display: flex;
+  align-items: center;
+  justify-content: center;
+  font-size: 20px;
+  font-weight: 700;
+  padding: 12px 16px;
+  border: none;
+  border-radius: 14px;
+}
+.qd-cb2-wrap {
+  flex: 1;
+  display: flex;
+  flex-direction: column;
+  gap: 2mm;
+  padding: 2mm;
+  overflow-y: auto;
+  min-width: 0;
+  min-height: 0;
+}
+.qd-cb2-wrap::-webkit-scrollbar { width: 6px; }
+.qd-cb2-wrap::-webkit-scrollbar-thumb { background: rgba(0,0,0,0.2); border-radius: 4px; }
+.qd-cb2-row {
+  display: flex;
+  flex: 1 1 0;
+  min-height: 0;
+  gap: 2mm;
+}
+.qd-cb2-sp-box {
+  flex-shrink: 0;
+  display: flex;
+  align-items: center;
+  justify-content: center;
+  text-align: center;
+  border-radius: 14px;
+  font-weight: 900;
+  padding: 4px 10px;
+  transition: width 0.15s, min-width 0.15s;
+}
+.qd-cb2-queue-box {
+  flex: 1;
+  display: flex;
+  align-items: center;
+  justify-content: center;
+  border-radius: 14px;
+  overflow: hidden;
+}
+.qd-cb2-queue-no {
+  font-weight: 900;
+  line-height: 1;
+  max-width: 100%;
+  white-space: nowrap;
+  padding: 0 10px;
+}
+
 /* ─── Right panel ─────────────────────────────────────────────── */
 .qd-right {
   flex-shrink: 0;
@@ -364,7 +566,6 @@
 .qd-noshow-no {
   font-weight: 900;
   line-height: 1;
-  text-shadow: 0 0 20px currentColor;
   letter-spacing: -1px;
 }
 .qd-noshow-sp {
