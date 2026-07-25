@@ -20,6 +20,7 @@ interface QDConfig {
   cbBg2: string // สีพื้นหลัง ส่วนที่ 2
   cbSpFontSize2: number // ขนาดตัวอักษรกล่อง "ช่อง" ในส่วนที่ 2 (แยกจาก spFontSize ของจอตาราง)
   cbHeader1: string // หัวคอลัมน์ ส่วนที่ 1 (พิมพ์ข้อความเองได้)
+  cbLeftSize: number // % ความกว้างของส่วนที่ 1 (ที่เหลือเป็นของส่วนที่ 2) ปรับให้สอดคล้องกับจำนวนคอลัมน์ส่วนที่ 2
   upcomingQueueMode: 'slot' | 'opd' | 'cur_dep' | 'slot_cur' // ประเภทคิวที่ใช้ดึงรายการคิวถัดไป (ส่วนที่ 4)
   // Header
   headerBg: string
@@ -110,6 +111,7 @@ const DEFAULT: QDConfig = {
   cbBg2: '#ffffff',
   cbSpFontSize2: 1.6,
   cbHeader1: 'คิวที่กำลังเรียก',
+  cbLeftSize: 57,
   upcomingQueueMode: 'slot',
   headerBg: '#1a237e',
   headerTextColor: '#ffffff',
@@ -210,6 +212,7 @@ function fixConfig(merged: Record<string, unknown>): QDConfig {
   if (typeof result.cbBg1 !== 'string' || !result.cbBg1) result.cbBg1 = DEFAULT.cbBg1
   if (typeof result.cbBg2 !== 'string' || !result.cbBg2) result.cbBg2 = DEFAULT.cbBg2
   if (typeof result.cbSpFontSize2 !== 'number' || result.cbSpFontSize2 <= 0) result.cbSpFontSize2 = DEFAULT.cbSpFontSize2
+  if (typeof result.cbLeftSize !== 'number' || result.cbLeftSize < 20 || result.cbLeftSize > 80) result.cbLeftSize = DEFAULT.cbLeftSize
   if (typeof result.cbHeader1 !== 'string') result.cbHeader1 = DEFAULT.cbHeader1
   if (!['slot', 'opd', 'cur_dep', 'slot_cur'].includes(result.upcomingQueueMode)) result.upcomingQueueMode = DEFAULT.upcomingQueueMode
   return result
@@ -236,6 +239,17 @@ function maskName(fullName: string): string {
 // fullName = concat(fname, ' ', lname) เช่น "วิลาวัณย์ บุญลี"
 function nameForTTS(fullName: string): string {
   return fullName || ''
+}
+
+// The global service-points fallback (server/index.js loadServicePoints default) names channels
+// "ช่อง 1".."ช่อง 6", while a display's OWN dedicated channels (config.displayChannels) are bare
+// "1".."9". A call placed without picking this display in QueueCall falls back to that global list,
+// so servicePoint arrives as "ช่อง 1" — never matching this display's bare channel id, and duplicating
+// the word "ช่อง"/ttsMiddle's own wording in both the on-screen badge and the TTS announcement.
+// Stripping a leading "ช่อง" here (once, at the point every WS event is consumed) normalizes both.
+function normalizeSpId(sp: string): string {
+  if (!sp) return sp
+  return sp.replace(/^ช่อง\s*/, '').trim()
 }
 
 // Callboard layout: shrink font size for longer queue codes so they don't overflow
@@ -531,13 +545,14 @@ export default function QueueDisplayPage() {
       if (cfg.filterDepts.length > 0 && data.department && !cfg.filterDepts.includes(data.department)) return
 
       const isServerTts = cfg.ttsEnabled && cfg.ttsSource === 'server'
+      const sp = normalizeSpId(data.servicePoint)
 
       if (isServerTts) {
         // Buffer display update — will be applied just before audio plays (keeps display+audio in sync).
         // Each call gets its own entry with its own fallback timer, so a second call (even to a
         // different channel) arriving before this one's audio does can never cancel THIS one's fallback.
         const entry: (typeof pendingDisplayRef)['current'][number] = {
-          sp: data.servicePoint,
+          sp,
           queueNo: data.queueNo,
           queueName: (data as any).queueName || '',
           displayConfigId: data.displayConfigId,
@@ -560,12 +575,11 @@ export default function QueueDisplayPage() {
         }, 9000)
       } else {
         // Non-server TTS or no TTS — update display immediately
-        setSpQueues(prev => ({ ...prev, [data.servicePoint]: data.queueNo }))
-        setSpNames(prev => ({ ...prev, [data.servicePoint]: (data as any).queueName || '' }))
-        setRowAnimKeys(prev => ({ ...prev, [data.servicePoint]: (prev[data.servicePoint] || 0) + 1 }))
-        setLastCalled({ sp: data.servicePoint, queueNo: data.queueNo, queueName: (data as any).queueName || '', department: (data as any).department, animKey: Date.now() })
+        setSpQueues(prev => ({ ...prev, [sp]: data.queueNo }))
+        setSpNames(prev => ({ ...prev, [sp]: (data as any).queueName || '' }))
+        setRowAnimKeys(prev => ({ ...prev, [sp]: (prev[sp] || 0) + 1 }))
+        setLastCalled({ sp, queueNo: data.queueNo, queueName: (data as any).queueName || '', department: (data as any).department, animKey: Date.now() })
         if (cfg.blinkEnabled) {
-          const sp = data.servicePoint
           clearTimeout(blinkTimers.current[sp])
           setBlinkingSPs(prev => new Set([...prev, sp]))
           blinkTimers.current[sp] = setTimeout(() => {
@@ -573,7 +587,7 @@ export default function QueueDisplayPage() {
           }, cfg.blinkCount * cfg.blinkSpeed * 2 + 400)
         }
         if (cfg.ttsEnabled && cfg.ttsSource !== 'server') {
-          playTTS(data.queueNo, data.servicePoint, cfg, (data as any).queueName)
+          playTTS(data.queueNo, sp, cfg, (data as any).queueName)
         } else if (cfg.soundEnabled) {
           playBeep()
         }
@@ -751,7 +765,8 @@ export default function QueueDisplayPage() {
       // Two calls can arrive close together (e.g. different channels) and their server TTS can finish
       // out of order, so shift() would sometimes pop the wrong entry and pair the wrong display update
       // with this audio (or leave the true match permanently stuck, silencing a later call).
-      const pi = pendingDisplayRef.current.findIndex(p => !p.played && p.sp === data.servicePoint && p.queueNo === data.queueNo)
+      const audioSp = normalizeSpId(data.servicePoint || '')
+      const pi = pendingDisplayRef.current.findIndex(p => !p.played && p.sp === audioSp && p.queueNo === data.queueNo)
       let pending: (typeof pendingDisplayRef)['current'][number] | undefined
       if (pi >= 0) {
         pending = pendingDisplayRef.current.splice(pi, 1)[0]
@@ -1034,10 +1049,12 @@ export default function QueueDisplayPage() {
     const cbPatientName = cbRawName && config.maskLastName ? maskName(cbRawName) : cbRawName
     const cbBadge = lastCalled?.queueNo ? extractBadge(lastCalled.queueNo) : null
     const upcoming = waitingQueues.slice(0, config.upcomingCount)
+    // ยิ่งแบ่งหลายคอลัมน์ แต่ละคอลัมน์ยิ่งแคบ ลดขนาดหัวคอลัมน์ลงกันข้อความล้น/ตัดคำ
+    const cbHeaderFontSize = `${Math.max(11, 20 - (config.numColumns - 1) * 4)}px`
 
     return (
       <div className="qd-cb-wrap">
-        <div className="qd-cb-left">
+        <div className="qd-cb-left" style={{ flex: `0 0 ${config.cbLeftSize}%` }}>
           <div className="qd-cb1-thead" style={{ background: config.tableHeaderBg, color: config.tableHeaderColor }}>
             {config.cbHeader1}
           </div>
@@ -1085,52 +1102,61 @@ export default function QueueDisplayPage() {
           )}
         </div>
 
-        {/* ส่วนที่ 2: ช่องบริการ — หัวคอลัมน์ + แถวแยกกล่อง "ช่อง" กับ "คิว" เป็นสี่เหลี่ยมขอบมน เว้นช่องไฟ ~2mm */}
-        <div className="qd-cb2-col" style={{ position: 'relative' }}>
-          <div className="qd-col-resizer" style={{ left: config.spColumnWidth }} onMouseDown={startResize} title="ลากเพื่อปรับความกว้าง" />
-          <div className="qd-cb2-thead">
-            <div className="qd-cb2-th-sp" style={{ width: config.spColumnWidth, minWidth: config.spColumnWidth, background: config.spHeaderBg, color: config.spHeaderColor }}>
-              {config.colSpHeader}
-            </div>
-            <div className="qd-cb2-th-queue" style={{ background: config.tableHeaderBg, color: config.tableHeaderColor }}>
-              {config.colQueueHeader}
-            </div>
-          </div>
-          <div className="qd-cb2-wrap">
-            {visibleSPs.length === 0 ? (
+        {/* ส่วนที่ 2: ช่องบริการ — แบ่งได้หลายคอลัมน์ (ตั้งค่าที่ "การจัดเรียงคอลัมน์") หัวคอลัมน์ + แถวแยกกล่อง "ช่อง" กับ "คิว" เป็นสี่เหลี่ยมขอบมน เว้นช่องไฟ ~2mm */}
+        <div className="qd-cb2-multi">
+          {columnGroups.every(g => g.length === 0) ? (
+            <div className="qd-cb2-col" style={{ position: 'relative' }}>
+              <div className="qd-col-resizer" style={{ left: config.spColumnWidth }} onMouseDown={startResize} title="ลากเพื่อปรับความกว้าง" />
               <div className="qd-empty">{servicePoints.length === 0 ? 'กำลังโหลด...' : '—'}</div>
-            ) : visibleSPs.map(sp => {
-              const displayName = config.spDisplayNames[sp.id] || config.spDisplayNames[sp.name] || sp.name
-              const queueNo = spQueues[sp.name] || spQueues[sp.id] || ''
-              const rowKey = rowAnimKeys[sp.name] || rowAnimKeys[sp.id] || 0
-              const chIsBlinking = config.blinkEnabled && !!queueNo && (blinkingSPs.has(sp.name) || blinkingSPs.has(sp.id))
-              const qn2FontSize = queueNo ? fitQueueFontSize(queueNo, config.cbFontSize2) : config.cbFontSize2 * 0.6
-              const boxBorder = `${config.borderWidth}px solid ${config.borderColor}`
-              return (
-                <div key={sp.id} className="qd-cb2-row">
-                  <div className="qd-cb2-sp-box" style={{
-                    width: config.spColumnWidth, minWidth: config.spColumnWidth,
-                    background: config.spColumnBg, color: config.spColumnColor,
-                    border: boxBorder, fontSize: `${config.cbSpFontSize2}vw`,
-                  }}>
-                    {displayName}
-                  </div>
-                  <div className="qd-cb2-queue-box" style={{
-                    background: config.cbBg2,
-                    border: boxBorder,
-                    ...(chIsBlinking ? {
-                      animation: `qd-blink-anim-cb2 ${config.blinkSpeed}ms step-end ${config.blinkCount}`,
-                    } as React.CSSProperties : {})
-                  }}>
-                    <div key={`ch-${rowKey}`} className={`qd-cb2-queue-no ${animClass}`}
-                      style={{ color: config.queueColor, fontSize: `${qn2FontSize}vw` }}>
-                      {queueNo || <span className="qd-dash" style={{ fontSize: 'inherit' }}>—</span>}
-                    </div>
-                  </div>
+            </div>
+          ) : columnGroups.map((sps, colIdx) => (
+            <div className="qd-cb2-col" key={colIdx} style={{ position: 'relative' }}>
+              {colIdx === 0 && (
+                <div className="qd-col-resizer" style={{ left: config.spColumnWidth }} onMouseDown={startResize} title="ลากเพื่อปรับความกว้าง" />
+              )}
+              <div className="qd-cb2-thead">
+                <div className="qd-cb2-th-sp" style={{ width: config.spColumnWidth, minWidth: config.spColumnWidth, background: config.spHeaderBg, color: config.spHeaderColor, fontSize: cbHeaderFontSize }}>
+                  {config.colSpHeader}
                 </div>
-              )
-            })}
-          </div>
+                <div className="qd-cb2-th-queue" style={{ background: config.tableHeaderBg, color: config.tableHeaderColor, fontSize: cbHeaderFontSize }}>
+                  {config.colQueueHeader}
+                </div>
+              </div>
+              <div className="qd-cb2-wrap">
+                {sps.map(sp => {
+                  const displayName = config.spDisplayNames[sp.id] || config.spDisplayNames[sp.name] || sp.name
+                  const queueNo = spQueues[sp.name] || spQueues[sp.id] || ''
+                  const rowKey = rowAnimKeys[sp.name] || rowAnimKeys[sp.id] || 0
+                  const chIsBlinking = config.blinkEnabled && !!queueNo && (blinkingSPs.has(sp.name) || blinkingSPs.has(sp.id))
+                  const qn2FontSize = queueNo ? fitQueueFontSize(queueNo, config.cbFontSize2) : config.cbFontSize2 * 0.6
+                  const boxBorder = `${config.borderWidth}px solid ${config.borderColor}`
+                  return (
+                    <div key={sp.id} className="qd-cb2-row">
+                      <div className="qd-cb2-sp-box" style={{
+                        width: config.spColumnWidth, minWidth: config.spColumnWidth,
+                        background: config.spColumnBg, color: config.spColumnColor,
+                        border: boxBorder, fontSize: `${config.cbSpFontSize2}vw`,
+                      }}>
+                        {displayName}
+                      </div>
+                      <div className="qd-cb2-queue-box" style={{
+                        background: config.cbBg2,
+                        border: boxBorder,
+                        ...(chIsBlinking ? {
+                          animation: `qd-blink-anim-cb2 ${config.blinkSpeed}ms step-end ${config.blinkCount}`,
+                        } as React.CSSProperties : {})
+                      }}>
+                        <div key={`ch-${rowKey}`} className={`qd-cb2-queue-no ${animClass}`}
+                          style={{ color: config.queueColor, fontSize: `${qn2FontSize}vw` }}>
+                          {queueNo || <span className="qd-dash" style={{ fontSize: 'inherit' }}>—</span>}
+                        </div>
+                      </div>
+                    </div>
+                  )
+                })}
+              </div>
+            </div>
+          ))}
         </div>
       </div>
     )
@@ -1296,6 +1322,11 @@ export default function QueueDisplayPage() {
                 <SRow label={`ขนาดตัวอักษร ส่วนที่ 1 (คิวปัจจุบัน): ${config.cbFontSize1}vw`}>
                   <input type="range" min="4" max="22" step="0.5" value={config.cbFontSize1}
                     onChange={e => setConfig(c => ({ ...c, cbFontSize1: Number(e.target.value) }))}
+                    className="qd-slider" />
+                </SRow>
+                <SRow label={`ความกว้าง ส่วนที่ 1: ${config.cbLeftSize}%`} hint="ปรับให้เล็กลงเมื่อส่วนที่ 2 มีหลายคอลัมน์ จะได้มีที่ว่างพอ">
+                  <input type="range" min="20" max="80" step="1" value={config.cbLeftSize}
+                    onChange={e => setConfig(c => ({ ...c, cbLeftSize: Number(e.target.value) }))}
                     className="qd-slider" />
                 </SRow>
                 <SRow label="สีพื้นหลัง ส่วนที่ 2 (ช่องบริการ)">

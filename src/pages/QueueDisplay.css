@@ -386,7 +386,16 @@
 .qd-cb-upcoming-dept { font-size: 11px; opacity: 0.65; white-space: nowrap; overflow: hidden; text-overflow: ellipsis; max-width: 120px; }
 .qd-cb-upcoming-empty { font-size: 14px; opacity: 0.5; padding: 0 14px; }
 
-/* ส่วนที่ 2: ช่องบริการ — หัวคอลัมน์ + แต่ละแถวแยกกล่อง "ช่อง" กับ "คิว" เป็นสี่เหลี่ยมขอบมน เว้นช่องไฟ ~2mm */
+/* ส่วนที่ 2: ช่องบริการ — หัวคอลัมน์ + แต่ละแถวแยกกล่อง "ช่อง" กับ "คิว" เป็นสี่เหลี่ยมขอบมน เว้นช่องไฟ ~2mm
+   รองรับหลายคอลัมน์ (config.numColumns) เมื่อจำนวนช่องมากเกินจะได้ไม่ต้องเลื่อนสกอลยาวๆ ในคอลัมน์เดียว */
+.qd-cb2-multi {
+  flex: 1;
+  display: flex;
+  gap: 8mm;
+  min-width: 0;
+  min-height: 0;
+  overflow: hidden;
+}
 .qd-cb2-col {
   flex: 1;
   display: flex;
@@ -412,6 +421,9 @@
   padding: 12px 10px;
   border: none;
   border-radius: 14px;
+  white-space: nowrap;
+  overflow: hidden;
+  text-overflow: ellipsis;
   transition: width 0.15s, min-width 0.15s;
 }
 .qd-cb2-th-queue {
@@ -424,6 +436,10 @@
   padding: 12px 16px;
   border: none;
   border-radius: 14px;
+  white-space: nowrap;
+  overflow: hidden;
+  text-overflow: ellipsis;
+  min-width: 0;
 }
 .qd-cb2-wrap {
   flex: 1;
