@@ -1807,7 +1807,7 @@ export default function QueueDisplayPage() {
               {/* ── ประกาศด้านล่าง (Footer) ── */}
               <SSec>ประกาศด้านล่าง (Footer)</SSec>
               <SRow label={`ความสูงแถบประกาศ: ${config.footerHeight}px`}>
-                <input type="range" min="24" max="120" step="2" value={config.footerHeight}
+                <input type="range" min="24" max="400" step="2" value={config.footerHeight}
                   onChange={e => setConfig(c => ({ ...c, footerHeight: Number(e.target.value) }))}
                   className="qd-slider" />
               </SRow>
@@ -1819,7 +1819,7 @@ export default function QueueDisplayPage() {
                   onChange={e => setConfig(c => ({ ...c, marqueeText: e.target.value }))} />
               </SRow>
               <SRow label={`ขนาดตัวอักษร: ${config.footerFontSize}px`}>
-                <input type="range" min="12" max="48" step="1" value={config.footerFontSize}
+                <input type="range" min="12" max="120" step="1" value={config.footerFontSize}
                   onChange={e => setConfig(c => ({ ...c, footerFontSize: Number(e.target.value) }))}
                   className="qd-slider" />
               </SRow>
