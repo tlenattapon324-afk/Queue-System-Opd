@@ -239,6 +239,7 @@
 }
 .app-nav-display-divider { height: 1px; background: #f0f4f8; margin: 4px 0; }
 .app-nav-display-group { }
+.app-nav-display-group + .app-nav-display-group { border-top: 1px solid #f0f4f8; }
 .app-nav-display-item-head { border-bottom: none; }
 .app-nav-display-ch-count { font-size: 12px; color: #0097A7; font-weight: 600; }
 .app-nav-display-channel-item {

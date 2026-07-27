@@ -236,25 +236,6 @@ export default function NavBar() {
                           {cfg.channels?.length ? <span className="app-nav-display-ch-count"> ({cfg.channels.length} ช่อง)</span> : null}
                         </span>
                       </div>
-                      {/* Channel rows — คลิกเลือกช่องเรียกคิว */}
-                      {cfg.channels?.map(ch => (
-                        <div
-                          key={ch}
-                          className="app-nav-display-channel-item"
-                          onClick={() => {
-                            const officer = sessionStorage.getItem('officer') || 'default'
-                            const prefs = JSON.parse(localStorage.getItem(`qc_prefs_${officer}`) || '{}')
-                            prefs.selectedDisplayId = cfg.id
-                            prefs.servicePointId = ch
-                            localStorage.setItem(`qc_prefs_${officer}`, JSON.stringify(prefs))
-                            window.dispatchEvent(new CustomEvent('qc-display-selected', { detail: { displayId: cfg.id, channel: ch } }))
-                            setShowDisplayNav(false)
-                          }}
-                        >
-                          <span className="app-nav-display-channel-dot" />
-                          ช่อง {ch}
-                        </div>
-                      ))}
                     </div>
                   ))
                 })()}

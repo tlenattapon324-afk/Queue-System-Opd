@@ -992,8 +992,9 @@ SELECT ov.vstdate, ov.vsttime,
     k.department,
     CASE
         WHEN EXISTS (SELECT 1 FROM oapp oa WHERE oa.visit_vn = ov.vn)
-        THEN 'นัดมา' ELSE 'walkin'
-    END AS visit_type
+        THEN 'appt' ELSE 'walkin'
+    END AS visit_type,
+    (SELECT d.name FROM oapp oa2 LEFT JOIN doctor d ON d.code = oa2.doctor WHERE oa2.visit_vn = ov.vn LIMIT 1) AS doctor_name
 FROM opd_qs_slot os
 LEFT JOIN ovst ov ON ov.vn = os.vn
 LEFT JOIN patient pt ON pt.hn = ov.hn
@@ -1015,8 +1016,9 @@ SELECT ov.vstdate, ov.vsttime,
     k.department,
     CASE
         WHEN EXISTS (SELECT 1 FROM oapp oa WHERE oa.visit_vn = ov.vn)
-        THEN 'นัดมา' ELSE 'walkin'
-    END AS visit_type
+        THEN 'appt' ELSE 'walkin'
+    END AS visit_type,
+    (SELECT d.name FROM oapp oa2 LEFT JOIN doctor d ON d.code = oa2.doctor WHERE oa2.visit_vn = ov.vn LIMIT 1) AS doctor_name
 FROM opd_qs_slot os
 LEFT JOIN ovst ov ON ov.vn = os.vn
 LEFT JOIN patient pt ON pt.hn = ov.hn
@@ -1040,8 +1042,9 @@ SELECT ov.vstdate, ov.vsttime,
     k.department,
     CASE
         WHEN EXISTS (SELECT 1 FROM oapp oa WHERE oa.visit_vn = ov.vn)
-        THEN 'นัดมา' ELSE 'walkin'
-    END AS visit_type
+        THEN 'appt' ELSE 'walkin'
+    END AS visit_type,
+    (SELECT d.name FROM oapp oa2 LEFT JOIN doctor d ON d.code = oa2.doctor WHERE oa2.visit_vn = ov.vn LIMIT 1) AS doctor_name
 FROM opd_qs_slot os
 LEFT JOIN ovst ov ON ov.vn = os.vn
 LEFT JOIN patient pt ON pt.hn = ov.hn
@@ -1063,8 +1066,9 @@ SELECT ov.vstdate, ov.vsttime,
     k.department,
     CASE
         WHEN EXISTS (SELECT 1 FROM oapp oa WHERE oa.visit_vn = ov.vn)
-        THEN 'นัดมา' ELSE 'walkin'
-    END AS visit_type
+        THEN 'appt' ELSE 'walkin'
+    END AS visit_type,
+    (SELECT d.name FROM oapp oa2 LEFT JOIN doctor d ON d.code = oa2.doctor WHERE oa2.visit_vn = ov.vn LIMIT 1) AS doctor_name
 FROM opd_qs_slot os
 LEFT JOIN ovst ov ON ov.vn = os.vn
 LEFT JOIN patient pt ON pt.hn = ov.hn
@@ -1086,8 +1090,9 @@ SELECT ov.vstdate, ov.vsttime,
     k.department,
     CASE
         WHEN EXISTS (SELECT 1 FROM oapp oa WHERE oa.visit_vn = ov.vn)
-        THEN 'นัดมา' ELSE 'walkin'
-    END AS visit_type
+        THEN 'appt' ELSE 'walkin'
+    END AS visit_type,
+    (SELECT d.name FROM oapp oa2 LEFT JOIN doctor d ON d.code = oa2.doctor WHERE oa2.visit_vn = ov.vn LIMIT 1) AS doctor_name
 FROM ovst ov
 LEFT JOIN patient pt ON pt.hn = ov.hn
 LEFT JOIN pttype p ON p.pttype = ov.pttype
@@ -1105,8 +1110,9 @@ SELECT ov.vstdate, ov.vsttime,
     k.department,
     CASE
         WHEN EXISTS (SELECT 1 FROM oapp oa WHERE oa.visit_vn = ov.vn)
-        THEN 'นัดมา' ELSE 'walkin'
-    END AS visit_type
+        THEN 'appt' ELSE 'walkin'
+    END AS visit_type,
+    (SELECT d.name FROM oapp oa2 LEFT JOIN doctor d ON d.code = oa2.doctor WHERE oa2.visit_vn = ov.vn LIMIT 1) AS doctor_name
 FROM ovst ov
 LEFT JOIN patient pt ON pt.hn = ov.hn
 LEFT JOIN pttype p ON p.pttype = ov.pttype
@@ -1126,8 +1132,9 @@ SELECT ov.vstdate, ov.vsttime,
     k.department,
     CASE
         WHEN EXISTS (SELECT 1 FROM oapp oa WHERE oa.visit_vn = ov.vn)
-        THEN 'นัดมา' ELSE 'walkin'
-    END AS visit_type
+        THEN 'appt' ELSE 'walkin'
+    END AS visit_type,
+    (SELECT d.name FROM oapp oa2 LEFT JOIN doctor d ON d.code = oa2.doctor WHERE oa2.visit_vn = ov.vn LIMIT 1) AS doctor_name
 FROM ovst ov
 LEFT JOIN patient pt ON pt.hn = ov.hn
 LEFT JOIN pttype p ON p.pttype = ov.pttype
@@ -1145,8 +1152,9 @@ SELECT ov.vstdate, ov.vsttime,
     k.department,
     CASE
         WHEN EXISTS (SELECT 1 FROM oapp oa WHERE oa.visit_vn = ov.vn)
-        THEN 'นัดมา' ELSE 'walkin'
-    END AS visit_type
+        THEN 'appt' ELSE 'walkin'
+    END AS visit_type,
+    (SELECT d.name FROM oapp oa2 LEFT JOIN doctor d ON d.code = oa2.doctor WHERE oa2.visit_vn = ov.vn LIMIT 1) AS doctor_name
 FROM ovst ov
 LEFT JOIN patient pt ON pt.hn = ov.hn
 LEFT JOIN pttype p ON p.pttype = ov.pttype
@@ -1191,6 +1199,62 @@ SELECT ov.vn,
     (SELECT MAX(confirm_radiology) FROM xray_report WHERE vn = ov.vn) AS xray_confirm_radiology
 FROM ovst ov
 WHERE ov.vstdate = $1`
+
+// ─── Appointment doctors (for the "แสดงเฉพาะคนไข้นัด" filter's doctor list) ───
+// One row per department+doctor pair, so the client can filter it down to whichever
+// department(s) are currently selected without a round-trip per department change.
+
+const APPT_DOCTORS_SQL_MAIN_DEP_MYSQL = `
+SELECT DISTINCT k.department AS department, d.name AS doctor_name
+FROM ovst o
+INNER JOIN oapp oa ON oa.visit_vn = o.vn
+LEFT JOIN doctor d ON d.code = oa.doctor
+LEFT JOIN kskdepartment k ON k.depcode = o.main_dep
+WHERE o.vstdate = ? AND d.name IS NOT NULL
+ORDER BY k.department, d.name`
+
+const APPT_DOCTORS_SQL_MAIN_DEP_PG = `
+SELECT DISTINCT k.department AS department, d.name AS doctor_name
+FROM ovst o
+INNER JOIN oapp oa ON oa.visit_vn = o.vn
+LEFT JOIN doctor d ON d.code = oa.doctor
+LEFT JOIN kskdepartment k ON k.depcode = o.main_dep
+WHERE o.vstdate = $1 AND d.name IS NOT NULL
+ORDER BY k.department, d.name`
+
+const APPT_DOCTORS_SQL_CUR_DEP_MYSQL = `
+SELECT DISTINCT k.department AS department, d.name AS doctor_name
+FROM ovst o
+INNER JOIN oapp oa ON oa.visit_vn = o.vn
+LEFT JOIN doctor d ON d.code = oa.doctor
+LEFT JOIN kskdepartment k ON k.depcode = o.cur_dep
+WHERE o.vstdate = ? AND d.name IS NOT NULL
+ORDER BY k.department, d.name`
+
+const APPT_DOCTORS_SQL_CUR_DEP_PG = `
+SELECT DISTINCT k.department AS department, d.name AS doctor_name
+FROM ovst o
+INNER JOIN oapp oa ON oa.visit_vn = o.vn
+LEFT JOIN doctor d ON d.code = oa.doctor
+LEFT JOIN kskdepartment k ON k.depcode = o.cur_dep
+WHERE o.vstdate = $1 AND d.name IS NOT NULL
+ORDER BY k.department, d.name`
+
+app.get('/api/queue/appointment-doctors', async (req, res) => {
+  const settings = loadSettings()
+  if (!settings) return res.json({ success: false, data: [] })
+  try {
+    const mode = ['opd', 'cur_dep', 'slot_cur'].includes(req.query.mode) ? req.query.mode : 'slot'
+    const usesCurDep = mode === 'cur_dep' || mode === 'slot_cur'
+    const mysql = usesCurDep ? APPT_DOCTORS_SQL_CUR_DEP_MYSQL : APPT_DOCTORS_SQL_MAIN_DEP_MYSQL
+    const pg = usesCurDep ? APPT_DOCTORS_SQL_CUR_DEP_PG : APPT_DOCTORS_SQL_MAIN_DEP_PG
+    const today = getTodayDate()
+    const rows = await queryDB(settings, mysql, pg, [today])
+    res.json({ success: true, data: rows })
+  } catch (err) {
+    res.json({ success: false, data: [], message: err.message })
+  }
+})
 
 // ─── API: Queue ───────────────────────────────────────────────────────────────
 

@@ -127,6 +127,13 @@ export async function getQueueList(
   return fetchJSON(`/queue/list?mode=${mode}`)
 }
 
+export async function getAppointmentDoctors(
+  mode: 'slot' | 'opd' | 'cur_dep' | 'slot_cur' = 'slot'
+): Promise<{ success: boolean; data: Array<{ department: string; doctor_name: string }>; message?: string }> {
+  if (isElectron()) return { success: true, data: [] }
+  return fetchJSON(`/queue/appointment-doctors?mode=${mode}`)
+}
+
 export async function callQueue(
   identifier: string, servicePoint: string, mode: 'slot' | 'opd' | 'cur_dep' | 'slot_cur' = 'slot', displayConfigId?: string
 ): Promise<{ success: boolean; message?: string; queueNo?: string; queueSlot?: number }> {

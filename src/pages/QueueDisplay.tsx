@@ -21,6 +21,7 @@ interface QDConfig {
   cbSpFontSize2: number // ขนาดตัวอักษรกล่อง "ช่อง" ในส่วนที่ 2 (แยกจาก spFontSize ของจอตาราง)
   cbHeader1: string // หัวคอลัมน์ ส่วนที่ 1 (พิมพ์ข้อความเองได้)
   cbLeftSize: number // % ความกว้างของส่วนที่ 1 (ที่เหลือเป็นของส่วนที่ 2) ปรับให้สอดคล้องกับจำนวนคอลัมน์ส่วนที่ 2
+  cbSpLabelFontSize: number // ขนาดตัวอักษรป้าย "ช่อง X" ในส่วนที่ 1
   upcomingQueueMode: 'slot' | 'opd' | 'cur_dep' | 'slot_cur' // ประเภทคิวที่ใช้ดึงรายการคิวถัดไป (ส่วนที่ 4)
   // Header
   headerBg: string
@@ -112,6 +113,7 @@ const DEFAULT: QDConfig = {
   cbSpFontSize2: 1.6,
   cbHeader1: 'คิวที่กำลังเรียก',
   cbLeftSize: 57,
+  cbSpLabelFontSize: 1.4,
   upcomingQueueMode: 'slot',
   headerBg: '#1a237e',
   headerTextColor: '#ffffff',
@@ -213,6 +215,7 @@ function fixConfig(merged: Record<string, unknown>): QDConfig {
   if (typeof result.cbBg2 !== 'string' || !result.cbBg2) result.cbBg2 = DEFAULT.cbBg2
   if (typeof result.cbSpFontSize2 !== 'number' || result.cbSpFontSize2 <= 0) result.cbSpFontSize2 = DEFAULT.cbSpFontSize2
   if (typeof result.cbLeftSize !== 'number' || result.cbLeftSize < 20 || result.cbLeftSize > 80) result.cbLeftSize = DEFAULT.cbLeftSize
+  if (typeof result.cbSpLabelFontSize !== 'number' || result.cbSpLabelFontSize <= 0) result.cbSpLabelFontSize = DEFAULT.cbSpLabelFontSize
   if (typeof result.cbHeader1 !== 'string') result.cbHeader1 = DEFAULT.cbHeader1
   if (!['slot', 'opd', 'cur_dep', 'slot_cur'].includes(result.upcomingQueueMode)) result.upcomingQueueMode = DEFAULT.upcomingQueueMode
   return result
@@ -1058,7 +1061,7 @@ export default function QueueDisplayPage() {
           <div className="qd-cb1-thead" style={{ background: config.tableHeaderBg, color: config.tableHeaderColor }}>
             {config.cbHeader1}
           </div>
-          <div className="qd-cb-big" style={{
+          <div key={`cb-big-${lastCalled?.animKey || 0}`} className="qd-cb-big" style={{
             background: config.cbBg1,
             border: `${config.borderWidth}px solid ${config.borderColor}`,
             ...(cbIsBlinking ? {
@@ -1074,7 +1077,7 @@ export default function QueueDisplayPage() {
                 {cbPatientName && (
                   <span className="qd-cb-patient-name" style={{ color: config.queueColor }}>{cbPatientName}</span>
                 )}
-                <span className="qd-cb-sp-label" style={{ background: config.tableHeaderBg, color: config.tableHeaderColor }}>
+                <span className="qd-cb-sp-label" style={{ background: config.tableHeaderBg, color: config.tableHeaderColor, fontSize: `${config.cbSpLabelFontSize}vw` }}>
                   ช่อง {lastCalled.sp}
                 </span>
               </div>
@@ -1139,7 +1142,7 @@ export default function QueueDisplayPage() {
                       }}>
                         {displayName}
                       </div>
-                      <div className="qd-cb2-queue-box" style={{
+                      <div key={`qbox-${rowKey}`} className="qd-cb2-queue-box" style={{
                         background: config.cbBg2,
                         border: boxBorder,
                         ...(chIsBlinking ? {
@@ -1327,6 +1330,11 @@ export default function QueueDisplayPage() {
                 <SRow label={`ความกว้าง ส่วนที่ 1: ${config.cbLeftSize}%`} hint="ปรับให้เล็กลงเมื่อส่วนที่ 2 มีหลายคอลัมน์ จะได้มีที่ว่างพอ">
                   <input type="range" min="20" max="80" step="1" value={config.cbLeftSize}
                     onChange={e => setConfig(c => ({ ...c, cbLeftSize: Number(e.target.value) }))}
+                    className="qd-slider" />
+                </SRow>
+                <SRow label={`ขนาดตัวอักษรป้าย "ช่อง X" ส่วนที่ 1: ${config.cbSpLabelFontSize}vw`}>
+                  <input type="range" min="0.5" max="6" step="0.1" value={config.cbSpLabelFontSize}
+                    onChange={e => setConfig(c => ({ ...c, cbSpLabelFontSize: Number(e.target.value) }))}
                     className="qd-slider" />
                 </SRow>
                 <SRow label="สีพื้นหลัง ส่วนที่ 2 (ช่องบริการ)">

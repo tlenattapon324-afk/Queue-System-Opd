@@ -600,6 +600,12 @@
 }
 .qc-dept-label { font-size: 14px; font-weight: 700; color: #546E7A; white-space: nowrap; flex-shrink: 0; }
 .qc-dept-dropdown { position: relative; width: 300px; flex-shrink: 0; }
+
+/* ทั้งหมด / เฉพาะคนไข้นัด / เฉพาะ Walk-in + doctor filter dropdown */
+.qc-visit-filter-group { display: flex; gap: 6px; flex-shrink: 0; }
+.qc-doctor-dropdown { position: relative; width: 260px; flex-shrink: 0; }
+.qc-doctor-dropdown.disabled { opacity: 0.5; }
+.qc-doctor-dropdown .qc-dept-trigger:disabled { cursor: not-allowed; }
 .qc-dept-trigger {
   display: flex; align-items: center; justify-content: space-between;
   width: 100%; padding: 9px 12px;

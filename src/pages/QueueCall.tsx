@@ -2,7 +2,7 @@ import { useState, useEffect, useCallback, useRef } from 'react'
 import { useNavigate } from 'react-router-dom'
 import {
   getQueueList, callQueue, onQueueCalled, updateQueueStatus,
-  getServicePoints, getDisplayConfigs, getDisplayQDConfig, clearDisplayQueues, getCallsToday, prewarmTTS, getLabXray, type LabXrayStatus
+  getServicePoints, getDisplayConfigs, getDisplayQDConfig, clearDisplayQueues, getCallsToday, prewarmTTS, getLabXray, getAppointmentDoctors, type LabXrayStatus
 } from '../lib/api'
 import './QueueCall.css'
 
@@ -18,7 +18,7 @@ function getPrefsKey() {
 function loadSavedPrefs() {
   try {
     return JSON.parse(localStorage.getItem(getPrefsKey()) || 'null') as
-      { servicePointId?: string; filterDepts?: string[]; selectedDisplayId?: string } | null
+      { servicePointId?: string; filterDepts?: string[]; selectedDisplayId?: string; visitFilter?: 'all' | 'appt' | 'walkin'; selectedDoctors?: string[] } | null
   } catch { return null }
 }
 
@@ -57,6 +57,13 @@ export default function QueueCallPage() {
   const [showDeptMenu, setShowDeptMenu] = useState(false)
   const [deptSearch, setDeptSearch] = useState('')
   const deptSearchRef = useRef<HTMLInputElement>(null)
+  const [visitFilter, setVisitFilter] = useState<'all' | 'appt' | 'walkin'>(() => loadSavedPrefs()?.visitFilter || 'all')
+  const [selectedDoctors, setSelectedDoctors] = useState<string[]>(() => loadSavedPrefs()?.selectedDoctors || [])
+  const [doctorList, setDoctorList] = useState<Array<{ department: string; doctor_name: string }>>([])
+  const [showDoctorMenu, setShowDoctorMenu] = useState(false)
+  const [doctorSearch, setDoctorSearch] = useState('')
+  const doctorMenuRef = useRef<HTMLDivElement>(null)
+  const doctorSearchRef = useRef<HTMLInputElement>(null)
   const [filterStatus, setFilterStatus] = useState<'all' | 'waiting' | 'calling' | 'done' | 'skip'>('all')
   const [currentCalled, setCurrentCalled] = useState<{ queueNo: string; servicePoint: string; calledAt?: string } | null>(null)
   const [callTimeMap, setCallTimeMap] = useState<Record<string, string>>({})
@@ -113,13 +120,16 @@ export default function QueueCallPage() {
   }, [])
 
   const savePrefs = () => {
-    localStorage.setItem(getPrefsKey(), JSON.stringify({ servicePointId, filterDepts, selectedDisplayId }))
+    localStorage.setItem(getPrefsKey(), JSON.stringify({ servicePointId, filterDepts, selectedDisplayId, visitFilter, selectedDoctors }))
     setSavedPrefsMsg(true)
     setTimeout(() => setSavedPrefsMsg(false), 2500)
   }
 
   useEffect(() => { loadSP() }, [loadSP])
   useEffect(() => { getDisplayConfigs().then(setDisplayConfigs) }, [])
+  useEffect(() => {
+    getAppointmentDoctors(mode).then(r => { if (r.success) setDoctorList(r.data) })
+  }, [mode])
 
   // Sync active SP and display for mini page — always write (even empty) so mini gets fresh values
   useEffect(() => {
@@ -279,6 +289,20 @@ export default function QueueCallPage() {
     }
     return () => document.removeEventListener('mousedown', handler)
   }, [showDeptMenu])
+
+  useEffect(() => {
+    const handler = (e: MouseEvent) => {
+      if (doctorMenuRef.current && !doctorMenuRef.current.contains(e.target as Node))
+        setShowDoctorMenu(false)
+    }
+    if (showDoctorMenu) {
+      document.addEventListener('mousedown', handler)
+      setTimeout(() => doctorSearchRef.current?.focus(), 60)
+    } else {
+      setDoctorSearch('')
+    }
+    return () => document.removeEventListener('mousedown', handler)
+  }, [showDoctorMenu])
 
   useEffect(() => {
     const handler = (e: MouseEvent) => {
@@ -518,11 +542,32 @@ export default function QueueCallPage() {
   const toggleDept = (dept: string) =>
     setFilterDepts(prev => prev.includes(dept) ? prev.filter(d => d !== dept) : [...prev, dept])
 
+  // Doctor list scoped to the currently selected ห้องตรวจ (filterDepts) — same relationship as
+  // the "ห้องตรวจ" filter itself, so picking a department narrows which doctors show up here.
+  const doctorsInScope = Array.from(new Set(
+    (filterDepts.length === 0 ? doctorList : doctorList.filter(d => filterDepts.includes(d.department)))
+      .map(d => d.doctor_name)
+      .filter(Boolean)
+  )).sort()
+
+  const toggleDoctor = (name: string) =>
+    setSelectedDoctors(prev => prev.includes(name) ? prev.filter(d => d !== name) : [...prev, name])
+
+  // Real count of today's waiting appointment patients per doctor — doctorsInScope itself just lists
+  // every doctor with an appointment today (regardless of visit status), so a doctor can show up with
+  // a name but 0 here if their patients haven't checked in yet or were already called/done.
+  const doctorPatientCount = (name: string) => activeQueues.filter(q =>
+    q.visit_type === 'appt' && q.doctor_name === name &&
+    (filterDepts.length === 0 || filterDepts.includes(q.department || ''))
+  ).length
+
   const filteredQueues = (filterStatus === 'done' || filterStatus === 'skip' ? queues : activeQueues)
     .filter(q => {
       const matchDept = filterDepts.length === 0 || filterDepts.includes(q.department || '')
       const matchStatus = filterStatus === 'all' ? true : q.status === filterStatus
-      return matchDept && matchStatus
+      const matchVisit = visitFilter === 'all' || q.visit_type === visitFilter
+      const matchDoctor = visitFilter !== 'appt' || selectedDoctors.length === 0 || (!!q.doctor_name && selectedDoctors.includes(q.doctor_name))
+      return matchDept && matchStatus && matchVisit && matchDoctor
     })
     .sort((a, b) => {
       // Queue_OPD / Queue_OPD_Room: sort oqueue (queue_no) numerically ascending
@@ -536,10 +581,13 @@ export default function QueueCallPage() {
       return 0
     })
 
-  // Count by status — respect dept filter so summary reflects selected room/display
-  const deptFilteredQueues = filterDepts.length === 0
-    ? queues
-    : queues.filter(q => filterDepts.includes(q.department || ''))
+  // Count by status — respect dept + appointment/doctor filter so summary reflects selected room/display
+  const deptFilteredQueues = queues.filter(q => {
+    const matchDept = filterDepts.length === 0 || filterDepts.includes(q.department || '')
+    const matchVisit = visitFilter === 'all' || q.visit_type === visitFilter
+    const matchDoctor = visitFilter !== 'appt' || selectedDoctors.length === 0 || (!!q.doctor_name && selectedDoctors.includes(q.doctor_name))
+    return matchDept && matchVisit && matchDoctor
+  })
   const countByStatus = (s: string) => deptFilteredQueues.filter(q => q.status === s).length
 
   const statusLabel: Record<string, string> = {
@@ -552,7 +600,9 @@ export default function QueueCallPage() {
   const hasCallingQueue = queues.some(q => q.status === 'calling')
   const hasWaitingQueue = queues.some(q =>
     q.status === 'waiting' &&
-    (filterDepts.length === 0 || filterDepts.includes(q.department || ''))
+    (filterDepts.length === 0 || filterDepts.includes(q.department || '')) &&
+    (visitFilter === 'all' || q.visit_type === visitFilter) &&
+    (visitFilter !== 'appt' || selectedDoctors.length === 0 || (!!q.doctor_name && selectedDoctors.includes(q.doctor_name)))
   )
 
   return (
@@ -1004,6 +1054,91 @@ export default function QueueCallPage() {
             >
               {savedPrefsMsg ? '✓ บันทึกแล้ว' : '💾 จำค่า'}
             </button>
+
+            <div className="qc-visit-filter-group">
+              {([
+                ['all', 'ทั้งหมด'],
+                ['walkin', 'เฉพาะ Walk-in'],
+                ['appt', 'เฉพาะคนไข้นัด'],
+              ] as const).map(([val, label]) => (
+                <button key={val}
+                  className={`qc-tab ${visitFilter === val ? 'active' : ''}`}
+                  onClick={() => setVisitFilter(val)}
+                >
+                  {label}
+                </button>
+              ))}
+            </div>
+
+            <div className={`qc-doctor-dropdown${visitFilter === 'appt' ? '' : ' disabled'}`} ref={doctorMenuRef}>
+              <button className={`qc-dept-trigger ${showDoctorMenu ? 'open' : ''}`}
+                disabled={visitFilter !== 'appt'}
+                onClick={() => setShowDoctorMenu(v => !v)}>
+                <span className="qc-dept-trigger-text">
+                  {selectedDoctors.length === 0
+                    ? 'แพทย์ทั้งหมด'
+                    : selectedDoctors.length === 1
+                      ? selectedDoctors[0]
+                      : `เลือก ${selectedDoctors.length} แพทย์`}
+                </span>
+                <svg width="12" height="12" viewBox="0 0 24 24" fill="none" className="qc-dept-caret">
+                  <path d="M6 9l6 6 6-6" stroke="currentColor" strokeWidth="2" strokeLinecap="round" strokeLinejoin="round" />
+                </svg>
+              </button>
+
+              {showDoctorMenu && (
+                <div className="qc-dept-menu">
+                  <div className="qc-dept-search-wrap">
+                    <svg width="13" height="13" viewBox="0 0 24 24" fill="none" className="qc-dept-search-icon">
+                      <circle cx="11" cy="11" r="8" stroke="currentColor" strokeWidth="2"/>
+                      <path d="M21 21l-4.35-4.35" stroke="currentColor" strokeWidth="2" strokeLinecap="round"/>
+                    </svg>
+                    <input
+                      ref={doctorSearchRef}
+                      className="qc-dept-search-input"
+                      type="text"
+                      placeholder="ค้นหาแพทย์..."
+                      value={doctorSearch}
+                      onChange={e => setDoctorSearch(e.target.value)}
+                      onKeyDown={e => e.stopPropagation()}
+                    />
+                    {doctorSearch && (
+                      <button className="qc-dept-search-clear" onClick={() => { setDoctorSearch(''); doctorSearchRef.current?.focus() }}>✕</button>
+                    )}
+                  </div>
+                  <div className="qc-dept-list-scroll">
+                    {!doctorSearch && (
+                      <>
+                        <label className="qc-dept-item all-item">
+                          <input type="checkbox" checked={selectedDoctors.length === 0} onChange={() => setSelectedDoctors([])} />
+                          <span>แพทย์ทั้งหมด</span>
+                          <span className="qc-dept-item-cnt">
+                            {activeQueues.filter(q => q.visit_type === 'appt' && (filterDepts.length === 0 || filterDepts.includes(q.department || ''))).length}
+                          </span>
+                        </label>
+                        <div className="qc-dept-divider" />
+                      </>
+                    )}
+                    {doctorsInScope.length === 0 ? (
+                      <div className="qc-dept-no-result">ไม่พบแพทย์ที่มีนัดหมายวันนี้</div>
+                    ) : doctorsInScope
+                      .filter(name => !doctorSearch || name.toLowerCase().includes(doctorSearch.toLowerCase()))
+                      .map(name => (
+                        <label key={name} className="qc-dept-item">
+                          <input
+                            type="checkbox"
+                            checked={selectedDoctors.length === 0 || selectedDoctors.includes(name)}
+                            onChange={() => toggleDoctor(name)}
+                          />
+                          <span>{name}</span>
+                          <span className="qc-dept-item-cnt">{doctorPatientCount(name)}</span>
+                        </label>
+                      ))
+                    }
+                  </div>
+                </div>
+              )}
+            </div>
             </div>
             <div className="qc-filter-tabs">
               {(['all', 'waiting', 'calling', 'done', 'skip'] as const).map(s => (
@@ -1134,8 +1269,8 @@ export default function QueueCallPage() {
                       <td className="qc-td-ins">{q.insurance || '—'}</td>
                       <td className="qc-td-dep">{q.department || '—'}</td>
                       <td className="qc-td-center">
-                        <span className={`qc-visit-badge ${q.visit_type === 'นัดมา' ? 'vb-appt' : 'vb-walk'}`}>
-                          {q.visit_type || '—'}
+                        <span className={`qc-visit-badge ${q.visit_type === 'appt' ? 'vb-appt' : 'vb-walk'}`}>
+                          {q.visit_type === 'appt' ? 'นัดมา' : q.visit_type === 'walkin' ? 'Walk-in' : (q.visit_type || '—')}
                         </span>
                       </td>
                       <td className="qc-td-center">

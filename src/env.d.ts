@@ -19,6 +19,7 @@ interface QueueItem {
   insurance: string
   department: string
   visit_type: string
+  doctor_name?: string | null
   vstdate: string
   vsttime: string
   service_point: string
