@@ -288,6 +288,17 @@
 }
 .qm-dept-select option { background: #fff; color: #0D47A1; }
 
+.qm-inherited-filter {
+  font-size: 11px;
+  font-weight: 600;
+  color: #0277BD;
+  background: rgba(2,119,189,0.10);
+  border: 1px solid rgba(2,119,189,0.22);
+  border-radius: 8px;
+  padding: 5px 10px;
+  flex-shrink: 0;
+}
+
 /* Back button (in list view) */
 .qm-back-btn {
   display: flex; align-items: center; gap: 4px;

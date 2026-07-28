@@ -990,15 +990,21 @@ SELECT ov.vstdate, ov.vsttime,
     CONCAT(pt.fname, ' ', pt.lname) AS queue_name,
     p.name AS insurance,
     k.department,
+    d2.name AS slot_doctor_name,
     CASE
-        WHEN EXISTS (SELECT 1 FROM oapp oa WHERE oa.visit_vn = ov.vn)
+        WHEN EXISTS (SELECT 1 FROM oapp oa WHERE oa.hn = ov.hn AND oa.nextdate = ov.vstdate AND oa.depcode = ov.main_dep)
         THEN 'appt' ELSE 'walkin'
     END AS visit_type,
-    (SELECT d.name FROM oapp oa2 LEFT JOIN doctor d ON d.code = oa2.doctor WHERE oa2.visit_vn = ov.vn LIMIT 1) AS doctor_name
+    (SELECT d.name FROM oapp oa2 LEFT JOIN doctor d ON d.code = oa2.doctor WHERE oa2.hn = ov.hn AND oa2.nextdate = ov.vstdate AND oa2.depcode = ov.main_dep LIMIT 1) AS doctor_name,
+    ist.name AS ist_name,
+    ost.name AS ost_name
 FROM opd_qs_slot os
+LEFT OUTER JOIN doctor d2 ON d2.code = os.doctor_code
 LEFT JOIN ovst ov ON ov.vn = os.vn
 LEFT JOIN patient pt ON pt.hn = ov.hn
 LEFT JOIN pttype p ON p.pttype = ov.pttype
+LEFT JOIN ovstist ist ON ist.ovstist = ov.ovstist
+LEFT JOIN ovstost ost ON ost.ovstost = ov.ovstost
 LEFT JOIN kskdepartment k ON k.depcode = ov.main_dep
 LEFT JOIN opd_qs_room oq ON oq.opd_qs_room_id = os.opd_qs_room_id
 WHERE ov.vstdate = ? AND ov.vn IS NOT NULL
@@ -1014,15 +1020,21 @@ SELECT ov.vstdate, ov.vsttime,
     CONCAT(pt.fname, ' ', pt.lname) AS queue_name,
     p.name AS insurance,
     k.department,
+    d2.name AS slot_doctor_name,
     CASE
-        WHEN EXISTS (SELECT 1 FROM oapp oa WHERE oa.visit_vn = ov.vn)
+        WHEN EXISTS (SELECT 1 FROM oapp oa WHERE oa.hn = ov.hn AND oa.nextdate = ov.vstdate AND oa.depcode = ov.main_dep)
         THEN 'appt' ELSE 'walkin'
     END AS visit_type,
-    (SELECT d.name FROM oapp oa2 LEFT JOIN doctor d ON d.code = oa2.doctor WHERE oa2.visit_vn = ov.vn LIMIT 1) AS doctor_name
+    (SELECT d.name FROM oapp oa2 LEFT JOIN doctor d ON d.code = oa2.doctor WHERE oa2.hn = ov.hn AND oa2.nextdate = ov.vstdate AND oa2.depcode = ov.main_dep LIMIT 1) AS doctor_name,
+    ist.name AS ist_name,
+    ost.name AS ost_name
 FROM opd_qs_slot os
+LEFT OUTER JOIN doctor d2 ON d2.code = os.doctor_code
 LEFT JOIN ovst ov ON ov.vn = os.vn
 LEFT JOIN patient pt ON pt.hn = ov.hn
 LEFT JOIN pttype p ON p.pttype = ov.pttype
+LEFT JOIN ovstist ist ON ist.ovstist = ov.ovstist
+LEFT JOIN ovstost ost ON ost.ovstost = ov.ovstost
 LEFT JOIN kskdepartment k ON k.depcode = ov.main_dep
 LEFT JOIN opd_qs_room oq ON oq.opd_qs_room_id = os.opd_qs_room_id
 WHERE ov.vstdate = $1 AND ov.vn IS NOT NULL
@@ -1041,14 +1053,18 @@ SELECT ov.vstdate, ov.vsttime,
     p.name AS insurance,
     k.department,
     CASE
-        WHEN EXISTS (SELECT 1 FROM oapp oa WHERE oa.visit_vn = ov.vn)
+        WHEN EXISTS (SELECT 1 FROM oapp oa WHERE oa.hn = ov.hn AND oa.nextdate = ov.vstdate AND oa.depcode = ov.cur_dep)
         THEN 'appt' ELSE 'walkin'
     END AS visit_type,
-    (SELECT d.name FROM oapp oa2 LEFT JOIN doctor d ON d.code = oa2.doctor WHERE oa2.visit_vn = ov.vn LIMIT 1) AS doctor_name
+    (SELECT d.name FROM oapp oa2 LEFT JOIN doctor d ON d.code = oa2.doctor WHERE oa2.hn = ov.hn AND oa2.nextdate = ov.vstdate AND oa2.depcode = ov.cur_dep LIMIT 1) AS doctor_name,
+    ist.name AS ist_name,
+    ost.name AS ost_name
 FROM opd_qs_slot os
 LEFT JOIN ovst ov ON ov.vn = os.vn
 LEFT JOIN patient pt ON pt.hn = ov.hn
 LEFT JOIN pttype p ON p.pttype = ov.pttype
+LEFT JOIN ovstist ist ON ist.ovstist = ov.ovstist
+LEFT JOIN ovstost ost ON ost.ovstost = ov.ovstost
 LEFT JOIN kskdepartment k ON k.depcode = ov.cur_dep
 LEFT JOIN opd_qs_room oq ON oq.opd_qs_room_id = os.opd_qs_room_id
 WHERE os.schedule_date = ? AND ov.vn IS NOT NULL
@@ -1065,14 +1081,18 @@ SELECT ov.vstdate, ov.vsttime,
     p.name AS insurance,
     k.department,
     CASE
-        WHEN EXISTS (SELECT 1 FROM oapp oa WHERE oa.visit_vn = ov.vn)
+        WHEN EXISTS (SELECT 1 FROM oapp oa WHERE oa.hn = ov.hn AND oa.nextdate = ov.vstdate AND oa.depcode = ov.cur_dep)
         THEN 'appt' ELSE 'walkin'
     END AS visit_type,
-    (SELECT d.name FROM oapp oa2 LEFT JOIN doctor d ON d.code = oa2.doctor WHERE oa2.visit_vn = ov.vn LIMIT 1) AS doctor_name
+    (SELECT d.name FROM oapp oa2 LEFT JOIN doctor d ON d.code = oa2.doctor WHERE oa2.hn = ov.hn AND oa2.nextdate = ov.vstdate AND oa2.depcode = ov.cur_dep LIMIT 1) AS doctor_name,
+    ist.name AS ist_name,
+    ost.name AS ost_name
 FROM opd_qs_slot os
 LEFT JOIN ovst ov ON ov.vn = os.vn
 LEFT JOIN patient pt ON pt.hn = ov.hn
 LEFT JOIN pttype p ON p.pttype = ov.pttype
+LEFT JOIN ovstist ist ON ist.ovstist = ov.ovstist
+LEFT JOIN ovstost ost ON ost.ovstost = ov.ovstost
 LEFT JOIN kskdepartment k ON k.depcode = ov.cur_dep
 LEFT JOIN opd_qs_room oq ON oq.opd_qs_room_id = os.opd_qs_room_id
 WHERE os.schedule_date = $1 AND ov.vn IS NOT NULL
@@ -1089,13 +1109,17 @@ SELECT ov.vstdate, ov.vsttime,
     p.name AS insurance,
     k.department,
     CASE
-        WHEN EXISTS (SELECT 1 FROM oapp oa WHERE oa.visit_vn = ov.vn)
+        WHEN EXISTS (SELECT 1 FROM oapp oa WHERE oa.hn = ov.hn AND oa.nextdate = ov.vstdate AND oa.depcode = ov.main_dep)
         THEN 'appt' ELSE 'walkin'
     END AS visit_type,
-    (SELECT d.name FROM oapp oa2 LEFT JOIN doctor d ON d.code = oa2.doctor WHERE oa2.visit_vn = ov.vn LIMIT 1) AS doctor_name
+    (SELECT d.name FROM oapp oa2 LEFT JOIN doctor d ON d.code = oa2.doctor WHERE oa2.hn = ov.hn AND oa2.nextdate = ov.vstdate AND oa2.depcode = ov.main_dep LIMIT 1) AS doctor_name,
+    ist.name AS ist_name,
+    ost.name AS ost_name
 FROM ovst ov
 LEFT JOIN patient pt ON pt.hn = ov.hn
 LEFT JOIN pttype p ON p.pttype = ov.pttype
+LEFT JOIN ovstist ist ON ist.ovstist = ov.ovstist
+LEFT JOIN ovstost ost ON ost.ovstost = ov.ovstost
 LEFT JOIN kskdepartment k ON k.depcode = ov.main_dep
 WHERE ov.vstdate = ?
 ORDER BY k.department, (ov.oqueue + 0), ov.oqueue`
@@ -1109,13 +1133,17 @@ SELECT ov.vstdate, ov.vsttime,
     p.name AS insurance,
     k.department,
     CASE
-        WHEN EXISTS (SELECT 1 FROM oapp oa WHERE oa.visit_vn = ov.vn)
+        WHEN EXISTS (SELECT 1 FROM oapp oa WHERE oa.hn = ov.hn AND oa.nextdate = ov.vstdate AND oa.depcode = ov.main_dep)
         THEN 'appt' ELSE 'walkin'
     END AS visit_type,
-    (SELECT d.name FROM oapp oa2 LEFT JOIN doctor d ON d.code = oa2.doctor WHERE oa2.visit_vn = ov.vn LIMIT 1) AS doctor_name
+    (SELECT d.name FROM oapp oa2 LEFT JOIN doctor d ON d.code = oa2.doctor WHERE oa2.hn = ov.hn AND oa2.nextdate = ov.vstdate AND oa2.depcode = ov.main_dep LIMIT 1) AS doctor_name,
+    ist.name AS ist_name,
+    ost.name AS ost_name
 FROM ovst ov
 LEFT JOIN patient pt ON pt.hn = ov.hn
 LEFT JOIN pttype p ON p.pttype = ov.pttype
+LEFT JOIN ovstist ist ON ist.ovstist = ov.ovstist
+LEFT JOIN ovstost ost ON ost.ovstost = ov.ovstost
 LEFT JOIN kskdepartment k ON k.depcode = ov.main_dep
 WHERE ov.vstdate = $1
 ORDER BY k.department, (CASE WHEN ov.oqueue::text ~ '^[0-9]+$' THEN ov.oqueue::text::bigint ELSE 0 END), ov.oqueue`
@@ -1131,13 +1159,17 @@ SELECT ov.vstdate, ov.vsttime,
     p.name AS insurance,
     k.department,
     CASE
-        WHEN EXISTS (SELECT 1 FROM oapp oa WHERE oa.visit_vn = ov.vn)
+        WHEN EXISTS (SELECT 1 FROM oapp oa WHERE oa.hn = ov.hn AND oa.nextdate = ov.vstdate AND oa.depcode = ov.cur_dep)
         THEN 'appt' ELSE 'walkin'
     END AS visit_type,
-    (SELECT d.name FROM oapp oa2 LEFT JOIN doctor d ON d.code = oa2.doctor WHERE oa2.visit_vn = ov.vn LIMIT 1) AS doctor_name
+    (SELECT d.name FROM oapp oa2 LEFT JOIN doctor d ON d.code = oa2.doctor WHERE oa2.hn = ov.hn AND oa2.nextdate = ov.vstdate AND oa2.depcode = ov.cur_dep LIMIT 1) AS doctor_name,
+    ist.name AS ist_name,
+    ost.name AS ost_name
 FROM ovst ov
 LEFT JOIN patient pt ON pt.hn = ov.hn
 LEFT JOIN pttype p ON p.pttype = ov.pttype
+LEFT JOIN ovstist ist ON ist.ovstist = ov.ovstist
+LEFT JOIN ovstost ost ON ost.ovstost = ov.ovstost
 LEFT JOIN kskdepartment k ON k.depcode = ov.cur_dep
 WHERE ov.vstdate = ?
 ORDER BY k.department, ov.oqueue`
@@ -1151,13 +1183,17 @@ SELECT ov.vstdate, ov.vsttime,
     p.name AS insurance,
     k.department,
     CASE
-        WHEN EXISTS (SELECT 1 FROM oapp oa WHERE oa.visit_vn = ov.vn)
+        WHEN EXISTS (SELECT 1 FROM oapp oa WHERE oa.hn = ov.hn AND oa.nextdate = ov.vstdate AND oa.depcode = ov.cur_dep)
         THEN 'appt' ELSE 'walkin'
     END AS visit_type,
-    (SELECT d.name FROM oapp oa2 LEFT JOIN doctor d ON d.code = oa2.doctor WHERE oa2.visit_vn = ov.vn LIMIT 1) AS doctor_name
+    (SELECT d.name FROM oapp oa2 LEFT JOIN doctor d ON d.code = oa2.doctor WHERE oa2.hn = ov.hn AND oa2.nextdate = ov.vstdate AND oa2.depcode = ov.cur_dep LIMIT 1) AS doctor_name,
+    ist.name AS ist_name,
+    ost.name AS ost_name
 FROM ovst ov
 LEFT JOIN patient pt ON pt.hn = ov.hn
 LEFT JOIN pttype p ON p.pttype = ov.pttype
+LEFT JOIN ovstist ist ON ist.ovstist = ov.ovstist
+LEFT JOIN ovstost ost ON ost.ovstost = ov.ovstost
 LEFT JOIN kskdepartment k ON k.depcode = ov.cur_dep
 WHERE ov.vstdate = $1
 ORDER BY k.department, ov.oqueue`
@@ -1203,53 +1239,32 @@ WHERE ov.vstdate = $1`
 // ─── Appointment doctors (for the "แสดงเฉพาะคนไข้นัด" filter's doctor list) ───
 // One row per department+doctor pair, so the client can filter it down to whichever
 // department(s) are currently selected without a round-trip per department change.
+// Matched directly off oapp's own nextdate/depcode (the scheduled appointment date and
+// department) — not via visit_vn — so a doctor shows up here as soon as they have an
+// appointment booked for today, whether or not that patient has checked in yet.
 
-const APPT_DOCTORS_SQL_MAIN_DEP_MYSQL = `
+const APPT_DOCTORS_SQL_MYSQL = `
 SELECT DISTINCT k.department AS department, d.name AS doctor_name
-FROM ovst o
-INNER JOIN oapp oa ON oa.visit_vn = o.vn
+FROM oapp oa
 LEFT JOIN doctor d ON d.code = oa.doctor
-LEFT JOIN kskdepartment k ON k.depcode = o.main_dep
-WHERE o.vstdate = ? AND d.name IS NOT NULL
+LEFT JOIN kskdepartment k ON k.depcode = oa.depcode
+WHERE oa.nextdate = ? AND d.name IS NOT NULL
 ORDER BY k.department, d.name`
 
-const APPT_DOCTORS_SQL_MAIN_DEP_PG = `
+const APPT_DOCTORS_SQL_PG = `
 SELECT DISTINCT k.department AS department, d.name AS doctor_name
-FROM ovst o
-INNER JOIN oapp oa ON oa.visit_vn = o.vn
+FROM oapp oa
 LEFT JOIN doctor d ON d.code = oa.doctor
-LEFT JOIN kskdepartment k ON k.depcode = o.main_dep
-WHERE o.vstdate = $1 AND d.name IS NOT NULL
-ORDER BY k.department, d.name`
-
-const APPT_DOCTORS_SQL_CUR_DEP_MYSQL = `
-SELECT DISTINCT k.department AS department, d.name AS doctor_name
-FROM ovst o
-INNER JOIN oapp oa ON oa.visit_vn = o.vn
-LEFT JOIN doctor d ON d.code = oa.doctor
-LEFT JOIN kskdepartment k ON k.depcode = o.cur_dep
-WHERE o.vstdate = ? AND d.name IS NOT NULL
-ORDER BY k.department, d.name`
-
-const APPT_DOCTORS_SQL_CUR_DEP_PG = `
-SELECT DISTINCT k.department AS department, d.name AS doctor_name
-FROM ovst o
-INNER JOIN oapp oa ON oa.visit_vn = o.vn
-LEFT JOIN doctor d ON d.code = oa.doctor
-LEFT JOIN kskdepartment k ON k.depcode = o.cur_dep
-WHERE o.vstdate = $1 AND d.name IS NOT NULL
+LEFT JOIN kskdepartment k ON k.depcode = oa.depcode
+WHERE oa.nextdate = $1 AND d.name IS NOT NULL
 ORDER BY k.department, d.name`
 
 app.get('/api/queue/appointment-doctors', async (req, res) => {
   const settings = loadSettings()
   if (!settings) return res.json({ success: false, data: [] })
   try {
-    const mode = ['opd', 'cur_dep', 'slot_cur'].includes(req.query.mode) ? req.query.mode : 'slot'
-    const usesCurDep = mode === 'cur_dep' || mode === 'slot_cur'
-    const mysql = usesCurDep ? APPT_DOCTORS_SQL_CUR_DEP_MYSQL : APPT_DOCTORS_SQL_MAIN_DEP_MYSQL
-    const pg = usesCurDep ? APPT_DOCTORS_SQL_CUR_DEP_PG : APPT_DOCTORS_SQL_MAIN_DEP_PG
     const today = getTodayDate()
-    const rows = await queryDB(settings, mysql, pg, [today])
+    const rows = await queryDB(settings, APPT_DOCTORS_SQL_MYSQL, APPT_DOCTORS_SQL_PG, [today])
     res.json({ success: true, data: rows })
   } catch (err) {
     res.json({ success: false, data: [], message: err.message })

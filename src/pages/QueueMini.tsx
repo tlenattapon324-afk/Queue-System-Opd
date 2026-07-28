@@ -30,12 +30,24 @@ export default function QueueMiniPage() {
       return depts.length === 1 ? depts[0] : ''
     } catch { return '' }
   })
+  // Inherited from the main queue-call page — "เฉพาะคนไข้นัด/Walk-in" + doctor selection —
+  // so opening Mini shows the same waiting-queue set the main page has filtered to.
+  const [visitFilter, setVisitFilter] = useState<'all' | 'appt' | 'walkin'>(
+    () => (localStorage.getItem('qc_visit_filter') as 'all' | 'appt' | 'walkin') || 'all'
+  )
+  const [selectedDoctors, setSelectedDoctors] = useState<string[]>(() => {
+    try { return JSON.parse(localStorage.getItem('qc_selected_doctors') || '[]') } catch { return [] }
+  })
   const [locked, setLocked] = useState(true)
   const [listView, setListView] = useState<'' | 'waiting' | 'done' | 'skip'>('')
   const [confirmEnabled, setConfirmEnabled] = useState(() => localStorage.getItem('qc_confirm') === 'true')
   const [pendingCall, setPendingCall] = useState<{ vn: string; queueNo: string } | null>(null)
-  // true = running inside Electron BrowserWindow (has ?electron=1 in URL)
-  const isElectronWindow = window.location.hash.includes('electron=1')
+  // true = running inside the actual native Electron Mini BrowserWindow.
+  // Checked via the user agent (Electron's Chromium always includes "Electron/") rather than
+  // relying solely on the ?electron=1 URL flag — that flag can survive a reload/redirect
+  // incorrectly and cause the real Mini window to loop back into the "opening…" placeholder
+  // instead of showing the actual calling UI.
+  const isElectronWindow = navigator.userAgent.includes('Electron') || window.location.hash.includes('electron=1')
   const [electronOpened, setElectronOpened] = useState(false)
   const lastCalledVnRef = useRef<string | null>(null)
   const currentSpNameRef = useRef<string>('')
@@ -174,6 +186,10 @@ export default function QueueMiniPage() {
           setSelectedDept(depts.length === 1 ? depts[0] : '')
         } catch {}
       }
+      if (e.key === 'qc_visit_filter') setVisitFilter((e.newValue as 'all' | 'appt' | 'walkin') || 'all')
+      if (e.key === 'qc_selected_doctors') {
+        try { setSelectedDoctors(JSON.parse(e.newValue || '[]')) } catch {}
+      }
     }
     window.addEventListener('storage', handler)
     return () => window.removeEventListener('storage', handler)
@@ -290,8 +306,16 @@ export default function QueueMiniPage() {
     return () => document.removeEventListener('keydown', handler)
   })
 
-  const deptOptions = Array.from(new Set(queues.map(q => q.department).filter(Boolean))).sort()
-  const byDeptFilter = (q: QueueRow) => !selectedDept || q.department === selectedDept
+  // Same "ห้องตรวจ" grouping key as the main queue-call page: Queue_Prefix (slot) groups by the
+  // queue-slot's assigned doctor/category (opd_qs_slot.doctor_code) instead of kskdepartment.
+  const roomKeyOf = (q: QueueRow) => mode === 'slot' ? (q.slot_doctor_name || '') : (q.department || '')
+  const deptOptions = Array.from(new Set(queues.map(roomKeyOf).filter(Boolean))).sort()
+  const byDeptFilter = (q: QueueRow) => {
+    const matchDept = !selectedDept || roomKeyOf(q) === selectedDept
+    const matchVisit = visitFilter === 'all' || q.visit_type === visitFilter
+    const matchDoctor = visitFilter !== 'appt' || selectedDoctors.length === 0 || (!!q.doctor_name && selectedDoctors.includes(q.doctor_name))
+    return matchDept && matchVisit && matchDoctor
+  }
   const waiting = queues.filter(q => q.status === 'waiting' && byDeptFilter(q)).length
   const hasCalling = queues.some(q => q.status === 'calling' && byDeptFilter(q))
   const listQueues = listView ? queues.filter(q => q.status === listView && byDeptFilter(q)) : []
@@ -336,12 +360,19 @@ export default function QueueMiniPage() {
       <div className="qm-dept-bar">
         <span className="qm-dept-label">ห้องตรวจ</span>
         <select className="qm-dept-select" value={selectedDept} onChange={e => setSelectedDept(e.target.value)}>
-          <option value="">ทุกห้อง ({queues.filter(q => q.status === 'waiting').length})</option>
+          <option value="">ทุกห้อง ({queues.filter(q => q.status === 'waiting' && (visitFilter === 'all' || q.visit_type === visitFilter)).length})</option>
           {deptOptions.map(d => (
-            <option key={d} value={d}>{d} ({queues.filter(q => q.status === 'waiting' && q.department === d).length})</option>
+            <option key={d} value={d}>{d} ({queues.filter(q => q.status === 'waiting' && roomKeyOf(q) === d && (visitFilter === 'all' || q.visit_type === visitFilter)).length})</option>
           ))}
         </select>
       </div>
+
+      {(visitFilter !== 'all' || selectedDoctors.length > 0) && (
+        <div className="qm-inherited-filter">
+          กรองตามหน้าหลัก: {visitFilter === 'appt' ? 'เฉพาะคนไข้นัด' : visitFilter === 'walkin' ? 'เฉพาะ Walk-in' : ''}
+          {visitFilter === 'appt' && selectedDoctors.length > 0 && ` · ${selectedDoctors.join(', ')}`}
+        </div>
+      )}
 
       {/* Display & channel selectors */}
       <div className="qm-serve-card">

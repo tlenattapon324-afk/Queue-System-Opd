@@ -818,6 +818,7 @@
 .qc-visit-badge { display: inline-block; padding: 5px 11px; border-radius: 10px; font-size: 13px; font-weight: 700; white-space: nowrap; }
 .vb-appt { background: rgba(13,71,161,0.1); color: #1565C0; border: 1px solid rgba(13,71,161,0.2); }
 .vb-walk { background: rgba(46,125,50,0.1); color: #2E7D32; border: 1px solid rgba(46,125,50,0.2); }
+.qc-ost-label { margin-top: 4px; font-size: 11px; color: #C62828; font-weight: 600; white-space: nowrap; }
 
 .qc-action-group { display: flex; gap: 5px; align-items: center; flex-wrap: nowrap; }
 

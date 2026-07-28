@@ -127,11 +127,11 @@ export async function getQueueList(
   return fetchJSON(`/queue/list?mode=${mode}`)
 }
 
-export async function getAppointmentDoctors(
-  mode: 'slot' | 'opd' | 'cur_dep' | 'slot_cur' = 'slot'
-): Promise<{ success: boolean; data: Array<{ department: string; doctor_name: string }>; message?: string }> {
+export async function getAppointmentDoctors(): Promise<
+  { success: boolean; data: Array<{ department: string; doctor_name: string }>; message?: string }
+> {
   if (isElectron()) return { success: true, data: [] }
-  return fetchJSON(`/queue/appointment-doctors?mode=${mode}`)
+  return fetchJSON('/queue/appointment-doctors')
 }
 
 export async function callQueue(

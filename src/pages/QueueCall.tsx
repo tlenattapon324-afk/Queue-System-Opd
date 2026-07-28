@@ -128,8 +128,8 @@ export default function QueueCallPage() {
   useEffect(() => { loadSP() }, [loadSP])
   useEffect(() => { getDisplayConfigs().then(setDisplayConfigs) }, [])
   useEffect(() => {
-    getAppointmentDoctors(mode).then(r => { if (r.success) setDoctorList(r.data) })
-  }, [mode])
+    getAppointmentDoctors().then(r => { if (r.success) setDoctorList(r.data) })
+  }, [])
 
   // Sync active SP and display for mini page — always write (even empty) so mini gets fresh values
   useEffect(() => {
@@ -261,6 +261,14 @@ export default function QueueCallPage() {
   useEffect(() => {
     try { localStorage.setItem('qc_mode', mode) } catch {}
   }, [mode])
+
+  useEffect(() => {
+    try { localStorage.setItem('qc_visit_filter', visitFilter) } catch {}
+  }, [visitFilter])
+
+  useEffect(() => {
+    try { localStorage.setItem('qc_selected_doctors', JSON.stringify(selectedDoctors)) } catch {}
+  }, [selectedDoctors])
 
   // Auto-focus quick-call input and redirect barcode scanner input here
   useEffect(() => {
@@ -537,15 +545,23 @@ export default function QueueCallPage() {
 
   const activeQueues = queues.filter(q => q.status === 'waiting' || q.status === 'calling')
 
-  const deptOptions = Array.from(new Set(activeQueues.map(q => q.department).filter(Boolean))).sort()
+  // "ห้องตรวจ" filter's grouping key — for Queue_Prefix (slot) it's the queue-slot's assigned
+  // doctor/category (opd_qs_slot.doctor_code, e.g. "คิวผู้ป่วยนอก"/"คิว ศัลยกรรม"), not the visit's
+  // kskdepartment. Every other mode keeps using department as before. The "แผนก" table column
+  // always shows q.department regardless of mode — only this filter's grouping changes.
+  const roomKeyOf = (q: QueueRow) => mode === 'slot' ? (q.slot_doctor_name || '') : (q.department || '')
+
+  const deptOptions = Array.from(new Set(activeQueues.map(roomKeyOf).filter(Boolean))).sort()
 
   const toggleDept = (dept: string) =>
     setFilterDepts(prev => prev.includes(dept) ? prev.filter(d => d !== dept) : [...prev, dept])
 
   // Doctor list scoped to the currently selected ห้องตรวจ (filterDepts) — same relationship as
   // the "ห้องตรวจ" filter itself, so picking a department narrows which doctors show up here.
+  // Queue_Prefix's filterDepts holds slot-doctor/category names, not real departments, so that
+  // scoping can't apply here — show the full unscoped doctor list for that mode instead.
   const doctorsInScope = Array.from(new Set(
-    (filterDepts.length === 0 ? doctorList : doctorList.filter(d => filterDepts.includes(d.department)))
+    (mode === 'slot' || filterDepts.length === 0 ? doctorList : doctorList.filter(d => filterDepts.includes(d.department)))
       .map(d => d.doctor_name)
       .filter(Boolean)
   )).sort()
@@ -558,12 +574,12 @@ export default function QueueCallPage() {
   // a name but 0 here if their patients haven't checked in yet or were already called/done.
   const doctorPatientCount = (name: string) => activeQueues.filter(q =>
     q.visit_type === 'appt' && q.doctor_name === name &&
-    (filterDepts.length === 0 || filterDepts.includes(q.department || ''))
+    (filterDepts.length === 0 || filterDepts.includes(roomKeyOf(q)))
   ).length
 
   const filteredQueues = (filterStatus === 'done' || filterStatus === 'skip' ? queues : activeQueues)
     .filter(q => {
-      const matchDept = filterDepts.length === 0 || filterDepts.includes(q.department || '')
+      const matchDept = filterDepts.length === 0 || filterDepts.includes(roomKeyOf(q))
       const matchStatus = filterStatus === 'all' ? true : q.status === filterStatus
       const matchVisit = visitFilter === 'all' || q.visit_type === visitFilter
       const matchDoctor = visitFilter !== 'appt' || selectedDoctors.length === 0 || (!!q.doctor_name && selectedDoctors.includes(q.doctor_name))
@@ -583,7 +599,7 @@ export default function QueueCallPage() {
 
   // Count by status — respect dept + appointment/doctor filter so summary reflects selected room/display
   const deptFilteredQueues = queues.filter(q => {
-    const matchDept = filterDepts.length === 0 || filterDepts.includes(q.department || '')
+    const matchDept = filterDepts.length === 0 || filterDepts.includes(roomKeyOf(q))
     const matchVisit = visitFilter === 'all' || q.visit_type === visitFilter
     const matchDoctor = visitFilter !== 'appt' || selectedDoctors.length === 0 || (!!q.doctor_name && selectedDoctors.includes(q.doctor_name))
     return matchDept && matchVisit && matchDoctor
@@ -600,7 +616,7 @@ export default function QueueCallPage() {
   const hasCallingQueue = queues.some(q => q.status === 'calling')
   const hasWaitingQueue = queues.some(q =>
     q.status === 'waiting' &&
-    (filterDepts.length === 0 || filterDepts.includes(q.department || '')) &&
+    (filterDepts.length === 0 || filterDepts.includes(roomKeyOf(q))) &&
     (visitFilter === 'all' || q.visit_type === visitFilter) &&
     (visitFilter !== 'appt' || selectedDoctors.length === 0 || (!!q.doctor_name && selectedDoctors.includes(q.doctor_name)))
   )
@@ -1035,7 +1051,7 @@ export default function QueueCallPage() {
                           />
                           <span>{dept}</span>
                           <span className="qc-dept-item-cnt">
-                            {activeQueues.filter(q => q.department === dept).length}
+                            {activeQueues.filter(q => roomKeyOf(q) === dept).length}
                           </span>
                         </label>
                       ))
@@ -1113,7 +1129,7 @@ export default function QueueCallPage() {
                           <input type="checkbox" checked={selectedDoctors.length === 0} onChange={() => setSelectedDoctors([])} />
                           <span>แพทย์ทั้งหมด</span>
                           <span className="qc-dept-item-cnt">
-                            {activeQueues.filter(q => q.visit_type === 'appt' && (filterDepts.length === 0 || filterDepts.includes(q.department || ''))).length}
+                            {activeQueues.filter(q => q.visit_type === 'appt' && (mode === 'slot' || filterDepts.length === 0 || filterDepts.includes(roomKeyOf(q)))).length}
                           </span>
                         </label>
                         <div className="qc-dept-divider" />
@@ -1269,9 +1285,12 @@ export default function QueueCallPage() {
                       <td className="qc-td-ins">{q.insurance || '—'}</td>
                       <td className="qc-td-dep">{q.department || '—'}</td>
                       <td className="qc-td-center">
-                        <span className={`qc-visit-badge ${q.visit_type === 'appt' ? 'vb-appt' : 'vb-walk'}`}>
-                          {q.visit_type === 'appt' ? 'นัดมา' : q.visit_type === 'walkin' ? 'Walk-in' : (q.visit_type || '—')}
+                        <span className={`qc-visit-badge ${q.ist_name?.includes('นัด') ? 'vb-appt' : 'vb-walk'}`}>
+                          {q.ist_name || '—'}
                         </span>
+                        {q.ost_name && (
+                          <div className="qc-ost-label">ส่งต่อ : {q.ost_name}</div>
+                        )}
                       </td>
                       <td className="qc-td-center">
                         <span className={`qc-badge ${statusClass[q.status] || 'badge-waiting'}`}>
