@@ -22,6 +22,8 @@ interface QDConfig {
   cbHeader1: string // หัวคอลัมน์ ส่วนที่ 1 (พิมพ์ข้อความเองได้)
   cbLeftSize: number // % ความกว้างของส่วนที่ 1 (ที่เหลือเป็นของส่วนที่ 2) ปรับให้สอดคล้องกับจำนวนคอลัมน์ส่วนที่ 2
   cbSpLabelFontSize: number // ขนาดตัวอักษรป้าย "ช่อง X" ในส่วนที่ 1
+  cbHeaderFontSize: number // ขนาดตัวอักษรหัวคอลัมน์ (ส่วนที่ 1 และส่วนที่ 2 ใช้ร่วมกัน — ต้องอยู่ระดับเดียวกัน)
+  cbHeaderHeight: number // ความสูงหัวคอลัมน์ (ส่วนที่ 1 และส่วนที่ 2 ใช้ร่วมกัน)
   upcomingQueueMode: 'slot' | 'opd' | 'cur_dep' | 'slot_cur' // ประเภทคิวที่ใช้ดึงรายการคิวถัดไป (ส่วนที่ 4)
   // Header
   headerBg: string
@@ -114,6 +116,8 @@ const DEFAULT: QDConfig = {
   cbHeader1: 'คิวที่กำลังเรียก',
   cbLeftSize: 57,
   cbSpLabelFontSize: 1.4,
+  cbHeaderFontSize: 20,
+  cbHeaderHeight: 48,
   upcomingQueueMode: 'slot',
   headerBg: '#1a237e',
   headerTextColor: '#ffffff',
@@ -216,6 +220,8 @@ function fixConfig(merged: Record<string, unknown>): QDConfig {
   if (typeof result.cbSpFontSize2 !== 'number' || result.cbSpFontSize2 <= 0) result.cbSpFontSize2 = DEFAULT.cbSpFontSize2
   if (typeof result.cbLeftSize !== 'number' || result.cbLeftSize < 20 || result.cbLeftSize > 80) result.cbLeftSize = DEFAULT.cbLeftSize
   if (typeof result.cbSpLabelFontSize !== 'number' || result.cbSpLabelFontSize <= 0) result.cbSpLabelFontSize = DEFAULT.cbSpLabelFontSize
+  if (typeof result.cbHeaderFontSize !== 'number' || result.cbHeaderFontSize <= 0) result.cbHeaderFontSize = DEFAULT.cbHeaderFontSize
+  if (typeof result.cbHeaderHeight !== 'number' || result.cbHeaderHeight <= 0) result.cbHeaderHeight = DEFAULT.cbHeaderHeight
   if (typeof result.cbHeader1 !== 'string') result.cbHeader1 = DEFAULT.cbHeader1
   if (!['slot', 'opd', 'cur_dep', 'slot_cur'].includes(result.upcomingQueueMode)) result.upcomingQueueMode = DEFAULT.upcomingQueueMode
   return result
@@ -1052,13 +1058,12 @@ export default function QueueDisplayPage() {
     const cbPatientName = cbRawName && config.maskLastName ? maskName(cbRawName) : cbRawName
     const cbBadge = lastCalled?.queueNo ? extractBadge(lastCalled.queueNo) : null
     const upcoming = waitingQueues.slice(0, config.upcomingCount)
-    // ยิ่งแบ่งหลายคอลัมน์ แต่ละคอลัมน์ยิ่งแคบ ลดขนาดหัวคอลัมน์ลงกันข้อความล้น/ตัดคำ
-    const cbHeaderFontSize = `${Math.max(11, 20 - (config.numColumns - 1) * 4)}px`
+    const cbHeaderFontSize = `${config.cbHeaderFontSize}px`
 
     return (
       <div className="qd-cb-wrap">
         <div className="qd-cb-left" style={{ flex: `0 0 ${config.cbLeftSize}%` }}>
-          <div className="qd-cb1-thead" style={{ background: config.tableHeaderBg, color: config.tableHeaderColor }}>
+          <div className="qd-cb1-thead" style={{ background: config.tableHeaderBg, color: config.tableHeaderColor, height: config.cbHeaderHeight, fontSize: cbHeaderFontSize }}>
             {config.cbHeader1}
           </div>
           <div key={`cb-big-${lastCalled?.animKey || 0}`} className="qd-cb-big" style={{
@@ -1118,10 +1123,10 @@ export default function QueueDisplayPage() {
                 <div className="qd-col-resizer" style={{ left: config.spColumnWidth }} onMouseDown={startResize} title="ลากเพื่อปรับความกว้าง" />
               )}
               <div className="qd-cb2-thead">
-                <div className="qd-cb2-th-sp" style={{ width: config.spColumnWidth, minWidth: config.spColumnWidth, background: config.spHeaderBg, color: config.spHeaderColor, fontSize: cbHeaderFontSize }}>
+                <div className="qd-cb2-th-sp" style={{ width: config.spColumnWidth, minWidth: config.spColumnWidth, height: config.cbHeaderHeight, background: config.spHeaderBg, color: config.spHeaderColor, fontSize: cbHeaderFontSize }}>
                   {config.colSpHeader}
                 </div>
-                <div className="qd-cb2-th-queue" style={{ background: config.tableHeaderBg, color: config.tableHeaderColor, fontSize: cbHeaderFontSize }}>
+                <div className="qd-cb2-th-queue" style={{ height: config.cbHeaderHeight, background: config.tableHeaderBg, color: config.tableHeaderColor, fontSize: cbHeaderFontSize }}>
                   {config.colQueueHeader}
                 </div>
               </div>
@@ -1335,6 +1340,16 @@ export default function QueueDisplayPage() {
                 <SRow label={`ขนาดตัวอักษรป้าย "ช่อง X" ส่วนที่ 1: ${config.cbSpLabelFontSize}vw`}>
                   <input type="range" min="0.5" max="6" step="0.1" value={config.cbSpLabelFontSize}
                     onChange={e => setConfig(c => ({ ...c, cbSpLabelFontSize: Number(e.target.value) }))}
+                    className="qd-slider" />
+                </SRow>
+                <SRow label={`ขนาดตัวอักษรหัวคอลัมน์: ${config.cbHeaderFontSize}px`} hint="ใช้ร่วมกันทั้งหัวส่วนที่ 1 และหัวส่วนที่ 2 ให้อยู่ระดับเดียวกัน">
+                  <input type="range" min="8" max="32" step="1" value={config.cbHeaderFontSize}
+                    onChange={e => setConfig(c => ({ ...c, cbHeaderFontSize: Number(e.target.value) }))}
+                    className="qd-slider" />
+                </SRow>
+                <SRow label={`ความสูงหัวคอลัมน์: ${config.cbHeaderHeight}px`}>
+                  <input type="range" min="24" max="120" step="2" value={config.cbHeaderHeight}
+                    onChange={e => setConfig(c => ({ ...c, cbHeaderHeight: Number(e.target.value) }))}
                     className="qd-slider" />
                 </SRow>
                 <SRow label="สีพื้นหลัง ส่วนที่ 2 (ช่องบริการ)">
