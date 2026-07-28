@@ -89,9 +89,10 @@ export default function QueueMiniPage() {
         const sp = currentSpNameRef.current
         const did = selectedDisplayIdRef.current
         if (sp && did) {
+          // r.status is already accurate per-slot (server keys call status by vn+queue_slot),
+          // so no need to cross-reference the calls array here.
           const waiting = rows
-            .filter(r => !calls.find((c: { vn: string; status?: string }) => c.vn === r.vn) ||
-                         calls.find((c: { vn: string; status?: string }) => c.vn === r.vn)?.status === 'waiting')
+            .filter(r => r.status === 'waiting')
             .slice(0, 5)
             .map(r => ({ no: String(r.queue_slot || r.queue_no || ''), name: r.queue_name || '' }))
           if (waiting.length) prewarmTTS(waiting, sp, did)
@@ -100,9 +101,14 @@ export default function QueueMiniPage() {
           if (prev) return prev
           const callingRows = rows.filter(r => r.status === 'calling')
           if (!callingRows.length) return null
+          // A VN can have multiple opd_qs_slot rows (Queue_Prefix) each with their own call
+          // entry — match by queue_slot too when the row has one, not vn alone.
+          const findCall = (r: QueueRow) => calls.find((c: { vn: string; queueNo?: string; calledAt?: string }) =>
+            c.vn === r.vn && (!r.queue_slot || !c.queueNo || c.queueNo === r.queue_slot)
+          )
           const latest = callingRows.reduce((best, r) => {
-            const t = calls.find((c: { vn: string; calledAt?: string }) => c.vn === r.vn)?.calledAt || ''
-            const bestT = calls.find((c: { vn: string; calledAt?: string }) => c.vn === best.vn)?.calledAt || ''
+            const t = findCall(r)?.calledAt || ''
+            const bestT = findCall(best)?.calledAt || ''
             return t > bestT ? r : best
           })
           if (!lastCalledVnRef.current) lastCalledVnRef.current = latest.vn
@@ -244,11 +250,24 @@ export default function QueueMiniPage() {
   }
 
   const handleCallNext = () => {
-    // Sort by oqueue (queue_no) ascending — matches ovst.oqueue order requested by user.
     // byDeptFilter: specific dept → filter that dept; '' (ทุกห้อง) → filter by display's qdFilterDepts.
     const next = [...queues]
       .filter(q => q.status === 'waiting' && byDeptFilter(q))
       .sort((a, b) => {
+        // Queue_Prefix/Queue_Prefix_Room: sort by queue_slot (prefix, then numeric suffix) —
+        // matches the order shown on the main queue-call page for the same ห้องตรวจ filter.
+        if (mode === 'slot' || mode === 'slot_cur') {
+          const av = String(a.queue_slot || '')
+          const bv = String(b.queue_slot || '')
+          const am = av.match(/^([A-Za-z]*)(\d+)$/)
+          const bm = bv.match(/^([A-Za-z]*)(\d+)$/)
+          if (am && bm) {
+            if (am[1] !== bm[1]) return am[1].localeCompare(bm[1])
+            return parseInt(am[2], 10) - parseInt(bm[2], 10)
+          }
+          return av.localeCompare(bv)
+        }
+        // Sort by oqueue (queue_no) ascending — matches ovst.oqueue order requested by user.
         const an = parseInt(String(a.queue_no || a.queue_slot || ''), 10)
         const bn = parseInt(String(b.queue_no || b.queue_slot || ''), 10)
         if (!isNaN(an) && !isNaN(bn)) return an - bn
@@ -256,7 +275,9 @@ export default function QueueMiniPage() {
         if (!isNaN(bn)) return 1
         return 0
       })[0]
-    if (next) doCall(next.vn, String(next.queue_slot || next.queue_no || ''))
+    // queue_slot is unique per opd_qs_slot row — a VN can have multiple rows (one per
+    // doctor/service point), so calling by bare VN could match a different doctor's slot.
+    if (next) doCall(next.queue_slot || next.vn, String(next.queue_slot || next.queue_no || ''))
   }
 
   const handleRecall = () => {
@@ -264,14 +285,14 @@ export default function QueueMiniPage() {
     const callingRow = queues.find(q =>
       String(q.queue_slot || q.queue_no || '') === String(currentCalled.queueNo)
     )
-    const identifier = callingRow?.vn ?? lastCalledVnRef.current ?? String(currentCalled.queueNo)
+    const identifier = (callingRow ? (callingRow.queue_slot || callingRow.vn) : null) ?? lastCalledVnRef.current ?? String(currentCalled.queueNo)
     doCall(identifier, String(currentCalled.queueNo))
   }
 
   const handleNoShow = async () => {
     const cur = queues.find(q => q.status === 'calling' && byDeptFilter(q))
     if (!cur) return
-    try { await updateQueueStatus(cur.vn, 'skip'); setCurrentCalled(null); loadQueues() } catch {}
+    try { await updateQueueStatus(cur.vn, 'skip', { queueSlot: cur.queue_slot }); setCurrentCalled(null); loadQueues() } catch {}
   }
 
   const handleManualCall = async (e: React.FormEvent) => {
@@ -280,7 +301,24 @@ export default function QueueMiniPage() {
     if (!val) return
     setManualLoading(true)
     try {
-      const res = await callQueue(val, currentSpName, mode, selectedDisplayId || undefined)
+      // When a specific ห้องตรวจ is filtered, resolve against ONLY the filtered rows first — a VN
+      // can have multiple opd_qs_slot records (one per doctor), so calling by bare VN/HN could
+      // match a different doctor's slot than the one currently filtered.
+      let callVal = val
+      if (selectedDept) {
+        const match = queues.find(q =>
+          byDeptFilter(q) &&
+          (String(q.vn) === val || String(q.hn || '') === val ||
+           String(q.queue_no ?? '') === val || String(q.queue_slot || '') === val)
+        )
+        if (!match) {
+          flash(false, 'ไม่พบคิวนี้ในห้องตรวจที่กรองไว้')
+          setManualLoading(false)
+          return
+        }
+        callVal = match.queue_slot || match.vn
+      }
+      const res = await callQueue(callVal, currentSpName, mode, selectedDisplayId || undefined)
       if (res.success) {
         setCurrentCalled({ queueNo: res.queueNo || val, servicePoint: currentSpName })
         setManualVal('')
@@ -418,7 +456,7 @@ export default function QueueMiniPage() {
                   <button
                     className={`qm-li-call-btn${q.status !== 'waiting' ? ' recall' : ''}`}
                     disabled={!!callingId}
-                    onClick={() => { doCall(q.vn, String(q.queue_slot || q.queue_no || '')); setListView('') }}
+                    onClick={() => { doCall(q.queue_slot || q.vn, String(q.queue_slot || q.queue_no || '')); setListView('') }}
                   >{q.status === 'waiting' ? '▶' : '↻'}</button>
                 </div>
               ))

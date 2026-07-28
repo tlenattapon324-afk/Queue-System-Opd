@@ -44,7 +44,11 @@ export default function QueueHistoryPage() {
       const [res, calls] = await Promise.all([getQueueList(mode), getCallsToday(mode)])
       if (res.success) setQueues(res.data)
       const map: Record<string, string> = {}
-      calls.forEach((c: CallEntry) => { if (c.vn && c.calledAt) map[c.vn] = c.calledAt })
+      calls.forEach((c: CallEntry) => {
+        if (!c.vn || !c.calledAt) return
+        map[c.vn] = c.calledAt
+        if (c.queueNo) map[`${c.vn}::${c.queueNo}`] = c.calledAt
+      })
       setCallTimeMap(prev => ({ ...prev, ...map }))
     } catch {}
     setLoading(false)
@@ -80,10 +84,16 @@ export default function QueueHistoryPage() {
   const handleRecall = async (q: QueueItem) => {
     setActionId(q.vn)
     try {
-      const res = await callQueue(q.vn, servicePoint, mode)
+      // queue_slot is unique per opd_qs_slot row — a VN can have multiple rows (one per
+      // doctor/service point), so calling by bare VN could recall a different doctor's slot.
+      const res = await callQueue(q.queue_slot || q.vn, servicePoint, mode)
       if (res.success) {
         const calledAt = new Date().toLocaleTimeString('th-TH', { hour: '2-digit', minute: '2-digit' })
-        setCallTimeMap(prev => ({ ...prev, [q.vn]: calledAt }))
+        setCallTimeMap(prev => ({
+          ...prev,
+          [q.vn]: calledAt,
+          ...(q.queue_slot ? { [`${q.vn}::${q.queue_slot}`]: calledAt } : {})
+        }))
         flash(true, `เรียกซ้ำ ${res.queueNo || q.queue_slot || q.queue_no} สำเร็จ`)
         load()
       } else {
@@ -100,7 +110,7 @@ export default function QueueHistoryPage() {
   const handleReturn = async (q: QueueItem) => {
     setActionId(q.vn + '_r')
     try {
-      await updateQueueStatus(q.vn, 'waiting')
+      await updateQueueStatus(q.vn, 'waiting', { queueSlot: q.queue_slot })
       flash(true, `คืนคิว ${q.queue_slot || q.queue_no} สำเร็จ`)
       load()
     } catch {
@@ -114,7 +124,7 @@ export default function QueueHistoryPage() {
     if (group.length === 0) return
     setActionId(key)
     try {
-      await Promise.all(group.map(q => updateQueueStatus(q.vn, 'waiting')))
+      await Promise.all(group.map(q => updateQueueStatus(q.vn, 'waiting', { queueSlot: q.queue_slot })))
       flash(true, `คืนคิว${label} ${group.length} รายการ สำเร็จ`)
       load()
     } catch {
@@ -128,7 +138,7 @@ export default function QueueHistoryPage() {
   const handleClear = async (q: QueueItem) => {
     setActionId(q.vn + '_c')
     try {
-      await updateQueueStatus(q.vn, 'cleared')
+      await updateQueueStatus(q.vn, 'cleared', { queueSlot: q.queue_slot })
       flash(true, `เคลียร์คิว ${q.queue_slot || q.queue_no} ออกจากหน้าจอแล้ว`)
       load()
     } catch {
@@ -142,7 +152,7 @@ export default function QueueHistoryPage() {
     if (skipQueues.length === 0) return
     setActionId('__clear__')
     try {
-      await Promise.all(skipQueues.map(q => updateQueueStatus(q.vn, 'cleared')))
+      await Promise.all(skipQueues.map(q => updateQueueStatus(q.vn, 'cleared', { queueSlot: q.queue_slot })))
       flash(true, `เคลียร์ทั้งหมด ${skipQueues.length} รายการ สำเร็จ`)
       load()
     } catch {
@@ -262,7 +272,7 @@ export default function QueueHistoryPage() {
                     </div>
                     <div className="qh-item-calltime">
                       <span className="qh-calltime-label">เรียกเมื่อ</span>
-                      <span className="qh-calltime-val">{callTimeMap[q.vn] ? `${callTimeMap[q.vn]} น.` : '—'}</span>
+                      <span className="qh-calltime-val">{callTimeMap[q.queue_slot ? `${q.vn}::${q.queue_slot}` : q.vn] ? `${callTimeMap[q.queue_slot ? `${q.vn}::${q.queue_slot}` : q.vn]} น.` : '—'}</span>
                     </div>
                     <div className="qh-item-btns">
                       <button className="qh-btn qh-btn-recall" onClick={() => handleRecall(q)} disabled={!!actionId}>
@@ -323,7 +333,7 @@ export default function QueueHistoryPage() {
                     </div>
                     <div className="qh-item-calltime">
                       <span className="qh-calltime-label">เรียกเมื่อ</span>
-                      <span className="qh-calltime-val">{callTimeMap[q.vn] ? `${callTimeMap[q.vn]} น.` : '—'}</span>
+                      <span className="qh-calltime-val">{callTimeMap[q.queue_slot ? `${q.vn}::${q.queue_slot}` : q.vn] ? `${callTimeMap[q.queue_slot ? `${q.vn}::${q.queue_slot}` : q.vn]} น.` : '—'}</span>
                     </div>
                     <div className="qh-item-btns">
                       <button className="qh-btn qh-btn-recall" onClick={() => handleRecall(q)} disabled={!!actionId}>
@@ -375,7 +385,7 @@ export default function QueueHistoryPage() {
                 </div>
                 <div className="qh-item-calltime">
                   <span className="qh-calltime-label">เรียกเมื่อ</span>
-                  <span className="qh-calltime-val">{callTimeMap[q.vn] ? `${callTimeMap[q.vn]} น.` : '—'}</span>
+                  <span className="qh-calltime-val">{callTimeMap[q.queue_slot ? `${q.vn}::${q.queue_slot}` : q.vn] ? `${callTimeMap[q.queue_slot ? `${q.vn}::${q.queue_slot}` : q.vn]} น.` : '—'}</span>
                 </div>
                 <div className="qh-item-btns">
                   <div className="qh-badge done">✓ เสร็จแล้ว</div>

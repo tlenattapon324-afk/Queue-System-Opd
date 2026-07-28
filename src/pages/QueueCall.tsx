@@ -155,20 +155,32 @@ export default function QueueCallPage() {
         const rows = res.data as QueueRow[]
         setQueues(rows)
         try { sessionStorage.setItem(`qc_queue_cache_${mode}`, JSON.stringify({ rows })) } catch {}
+        // Keyed by vn::queueNo too (not just vn) — a VN can have multiple opd_qs_slot rows
+        // (Queue_Prefix), each called independently with its own time; the plain-vn entry is
+        // kept only as a fallback for modes where a VN never has more than one row.
         const map: Record<string, string> = {}
-        calls.forEach(c => { if (c.vn && c.calledAt) map[c.vn] = c.calledAt })
+        calls.forEach(c => {
+          if (!c.vn || !c.calledAt) return
+          map[c.vn] = c.calledAt
+          if (c.queueNo) map[`${c.vn}::${c.queueNo}`] = c.calledAt
+        })
         setCallTimeMap(prev => ({ ...prev, ...map }))
         setCurrentCalled(prev => {
           if (prev) return prev
           const callingRows = rows.filter(r => r.status === 'calling')
           if (callingRows.length === 0) return null
+          // A VN can have multiple opd_qs_slot rows (Queue_Prefix) each with their own call
+          // entry — match by queue_slot too when the row has one, not vn alone.
+          const findCall = (r: QueueRow) => calls.find(c =>
+            c.vn === r.vn && (!r.queue_slot || !c.queueNo || c.queueNo === r.queue_slot)
+          )
           const latest = callingRows.reduce((best, r) => {
-            const t = calls.find(c => c.vn === r.vn)?.calledAt || ''
-            const bestT = calls.find(c => c.vn === best.vn)?.calledAt || ''
+            const t = findCall(r)?.calledAt || ''
+            const bestT = findCall(best)?.calledAt || ''
             return t > bestT ? r : best
           })
           const queueNo = String(latest.queue_slot || latest.queue_no || '')
-          const callEntry = calls.find(c => c.vn === latest.vn)
+          const callEntry = findCall(latest)
           if (!lastCalledVnRef.current) lastCalledVnRef.current = latest.vn
           return { queueNo, servicePoint: latest.service_point || '', calledAt: callEntry?.calledAt }
         })
@@ -393,15 +405,28 @@ export default function QueueCallPage() {
     }
     setCallingId(queue.vn)
     try {
-      const res = await callQueue(queue.vn, currentSpName, mode, selectedDisplayId || undefined)
+      // Queue_Prefix: one VN can have multiple opd_qs_slot rows (one per doctor/service point) —
+      // identifying by VN alone is ambiguous and could call a different doctor's slot than the
+      // one on screen. queue_slot is unique per row, so prefer it whenever this row has one.
+      const res = await callQueue(queue.queue_slot || queue.vn, currentSpName, mode, selectedDisplayId || undefined)
       if (res.success) {
         lastCalledVnRef.current = queue.vn
         const calledNo = res.queueNo || queue.queue_no
         const calledAt = new Date().toLocaleTimeString('th-TH', { hour: '2-digit', minute: '2-digit' })
         setCurrentCalled({ queueNo: calledNo, servicePoint: currentSpName, calledAt })
-        setCallTimeMap(prev => ({ ...prev, [queue.vn]: calledAt }))
-        // Optimistic update — status changes immediately, WebSocket queue:called will trigger full reload
-        setQueues(prev => prev.map(q => q.vn === queue.vn ? { ...q, status: 'calling' as QueueStatus, service_point: currentSpName } : q))
+        setCallTimeMap(prev => ({
+          ...prev,
+          [queue.vn]: calledAt,
+          ...(queue.queue_slot ? { [`${queue.vn}::${queue.queue_slot}`]: calledAt } : {})
+        }))
+        // Optimistic update — status changes immediately, WebSocket queue:called will trigger full reload.
+        // Match by queue_slot when this row has one — a VN can have multiple opd_qs_slot rows
+        // (Queue_Prefix), and matching by vn alone would optimistically mark ALL of them as calling.
+        setQueues(prev => prev.map(q =>
+          (queue.queue_slot ? q.queue_slot === queue.queue_slot : q.vn === queue.vn)
+            ? { ...q, status: 'calling' as QueueStatus, service_point: currentSpName }
+            : q
+        ))
         if (!selectedDisplayId) {
           const r = callNextBtnRef.current?.getBoundingClientRect()
           setCheckDisplayPopup({ queueNo: calledNo, sp: currentSpName, px: r ? r.right + 12 : 320, py: r ? r.top + r.height / 2 : 200 })
@@ -450,7 +475,7 @@ export default function QueueCallPage() {
     const callingRow = queues.find(q =>
       String(q.queue_slot || q.queue_no || '') === String(currentCalled.queueNo)
     )
-    const identifier = callingRow?.vn ?? lastCalledVnRef.current ?? String(currentCalled.queueNo)
+    const identifier = (callingRow ? (callingRow.queue_slot || callingRow.vn) : null) ?? lastCalledVnRef.current ?? String(currentCalled.queueNo)
     setCallingId('__recall__')
     try {
       const res = await callQueue(identifier, currentSpName, mode, selectedDisplayId || undefined)
@@ -470,7 +495,7 @@ export default function QueueCallPage() {
       try {
         const target = queues.find(q => q.vn === lockedVn)
         const queueNo = target ? String(target.queue_slot || target.queue_no || '') : undefined
-        await updateQueueStatus(lockedVn, 'skip', { queueNo, servicePoint: currentSpName })
+        await updateQueueStatus(lockedVn, 'skip', { queueNo, queueSlot: target?.queue_slot, servicePoint: currentSpName })
         setLockedVn(null)
         if (target?.status === 'calling') setCurrentCalled(null)
         loadQueues()
@@ -518,7 +543,23 @@ export default function QueueCallPage() {
     if (!val) return
     setCallingId('__quick__')
     try {
-      const res = await callQueue(val, currentSpName, mode, selectedDisplayId || undefined)
+      // When a specific ห้องตรวจ is filtered, resolve the scanned/typed value against ONLY the
+      // filtered rows first — a VN can have multiple opd_qs_slot records (one per doctor), so
+      // calling by a bare VN/HN would let the server match whichever one it finds first, possibly
+      // a different doctor's slot than the one currently filtered on screen.
+      let callVal = val
+      if (filterDepts.length > 0) {
+        const match = filteredQueues.find(q =>
+          String(q.vn) === val || String(q.hn || '') === val ||
+          String(q.queue_no ?? '') === val || String(q.queue_slot || '') === val
+        )
+        if (!match) {
+          setQuickCallMsg({ ok: false, text: 'ไม่พบคิวนี้ในห้องตรวจที่กรองไว้' })
+          return
+        }
+        callVal = match.queue_slot || match.vn
+      }
+      const res = await callQueue(callVal, currentSpName, mode, selectedDisplayId || undefined)
       if (res.success) {
         const calledAt = new Date().toLocaleTimeString('th-TH', { hour: '2-digit', minute: '2-digit' })
         setCurrentCalled({ queueNo: res.queueNo || val, servicePoint: currentSpName, calledAt })
@@ -538,7 +579,7 @@ export default function QueueCallPage() {
   }
 
   const handleStatusChange = async (queue: QueueRow, status: QueueStatus) => {
-    try { await updateQueueStatus(queue.vn, status); loadQueues() } catch {}
+    try { await updateQueueStatus(queue.vn, status, { queueSlot: queue.queue_slot }); loadQueues() } catch {}
   }
 
   // ── Derived values ──────────────────────────────────────────────────────────
@@ -593,6 +634,21 @@ export default function QueueCallPage() {
         if (!isNaN(an) && !isNaN(bn)) return an - bn
         if (!isNaN(an)) return -1
         if (!isNaN(bn)) return 1
+      }
+      // Queue_Prefix / Queue_Prefix_Room: the server's ORDER BY groups by kskdepartment first,
+      // which no longer lines up with how ห้องตรวจ filters (slot_doctor_name for Queue_Prefix) —
+      // sort by queue_slot (prefix, then its numeric suffix ascending) so a filtered category
+      // reads in the order the tickets were actually issued.
+      if (mode === 'slot' || mode === 'slot_cur') {
+        const av = String(a.queue_slot || '')
+        const bv = String(b.queue_slot || '')
+        const am = av.match(/^([A-Za-z]*)(\d+)$/)
+        const bm = bv.match(/^([A-Za-z]*)(\d+)$/)
+        if (am && bm) {
+          if (am[1] !== bm[1]) return am[1].localeCompare(bm[1])
+          return parseInt(am[2], 10) - parseInt(bm[2], 10)
+        }
+        return av.localeCompare(bv)
       }
       return 0
     })
@@ -1203,7 +1259,7 @@ export default function QueueCallPage() {
                           className="qc-tick-all-btn"
                           onClick={async () => {
                             const calling = queues.filter(q => q.status === 'calling')
-                            await Promise.all(calling.map(q => updateQueueStatus(q.vn, 'done')))
+                            await Promise.all(calling.map(q => updateQueueStatus(q.vn, 'done', { queueSlot: q.queue_slot })))
                             setCurrentCalled(null)
                             loadQueues()
                           }}
@@ -1302,7 +1358,7 @@ export default function QueueCallPage() {
                           {statusLabel[q.status] || q.status}
                         </span>
                       </td>
-                      <td className="qc-td-calltime">{callTimeMap[q.vn] || '—'}</td>
+                      <td className="qc-td-calltime">{callTimeMap[q.queue_slot ? `${q.vn}::${q.queue_slot}` : q.vn] || '—'}</td>
                       <td className="qc-td-action">
                         {q.status === 'waiting' && (
                           <button className="btn btn-primary qc-call-btn" onClick={() => handleCall(q)} disabled={!!callingId}>

@@ -171,7 +171,7 @@ export async function getLabXray(): Promise<Record<string, LabXrayStatus>> {
 }
 
 export async function updateQueueStatus(
-  vn: string, status: string, extra?: { queueNo?: string; servicePoint?: string }
+  vn: string, status: string, extra?: { queueNo?: string; queueSlot?: string | null; servicePoint?: string }
 ): Promise<{ success: boolean }> {
   if (isElectron()) return window.electronAPI.updateQueueStatus(vn, status)
   return fetchJSON('/queue/status', { method: 'POST', body: JSON.stringify({ vn, status, ...extra }) })

@@ -978,6 +978,17 @@ function saveTodayCalls(calls) {
   fs.writeFileSync(QUEUE_CALLS_FILE, JSON.stringify({ date: today, calls }, null, 2))
 }
 
+// A single VN can have multiple opd_qs_slot rows (one per doctor/service point, Queue_Prefix
+// mode) — keying call-status purely by VN made calling ONE of them mark ALL of them as
+// "calling"/done/skip. Key by vn+queueSlot when a slot number is available (Queue_Prefix),
+// falling back to plain vn for modes that only ever have one row per VN.
+function callsKey(vn, queueSlot) {
+  return queueSlot ? `${vn}::${queueSlot}` : String(vn)
+}
+function getCallFor(calls, vn, queueSlot) {
+  return calls[callsKey(vn, queueSlot)]
+}
+
 // ─── HOSxP queue SQL (Slot mode — opd_qs_slot) ───────────────────────────────
 
 const HOSXP_SQL_MYSQL = `
@@ -1283,7 +1294,7 @@ app.get('/api/queue/list', async (req, res) => {
     const rows = await queryDB(settings, mysql, pg, [today])
     const calls = getTodayCalls()
     const data = rows.map(r => {
-      const call = calls[r.vn]
+      const call = getCallFor(calls, r.vn, r.queue_slot)
       // cur_dep / slot_cur modes: only show status from calls made via the same mode
       const isCurMode = mode === 'cur_dep' || mode === 'slot_cur'
       const effectiveStatus = (isCurMode && call && call.mode !== mode)
@@ -1353,7 +1364,8 @@ app.post('/api/queue/call', async (req, res) => {
     const displayNo = found.queue_slot || (found.queue_no != null ? String(found.queue_no) : '')
     const calls = getTodayCalls()
     const department = found.department || ''
-    calls[found.vn] = {
+    calls[callsKey(found.vn, found.queue_slot)] = {
+      vn: found.vn,
       status: 'calling',
       servicePoint: String(servicePoint),
       calledAt: new Date().toLocaleTimeString('th-TH'),
@@ -1403,7 +1415,11 @@ app.post('/api/queue/call', async (req, res) => {
             if (prewarmEdgeVoice) {
               const currentCalls = getTodayCalls()
               const waitingNext = rows
-                .filter(r => r.vn !== found.vn && (!currentCalls[r.vn] || currentCalls[r.vn].status === 'waiting'))
+                .filter(r => {
+                  if (r.vn === found.vn) return false
+                  const c = getCallFor(currentCalls, r.vn, r.queue_slot)
+                  return !c || c.status === 'waiting'
+                })
                 .slice(0, 3)
               const allSPs = loadServicePoints().map(sp => sp.id)
               // Iterate in REVERSE so unshift produces correct order at queue front.
@@ -1459,19 +1475,21 @@ app.get('/api/queue/calls-today', (req, res) => {
       if (modeFilter) return !v.mode || (v.mode !== 'cur_dep' && v.mode !== 'slot_cur')
       return true
     })
-    .map(([vn, v]) => ({ vn, ...v }))
+    .map(([key, v]) => ({ vn: v.vn || key, ...v }))
   res.json(result)
 })
 
 app.post('/api/queue/status', (req, res) => {
   // Update status manually (done / skip / waiting / noshow)
-  const { vn, status, queueNo, servicePoint } = req.body
+  const { vn, status, queueNo, queueSlot, servicePoint } = req.body
   if (!vn || !status) return res.json({ success: false })
   const calls = getTodayCalls()
+  const key = callsKey(vn, queueSlot)
   const now = new Date().toLocaleTimeString('th-TH', { hour: '2-digit', minute: '2-digit', second: '2-digit' })
-  const existing = calls[vn] || {}
-  calls[vn] = {
+  const existing = calls[key] || {}
+  calls[key] = {
     ...existing,
+    vn,
     status,
     // Fill in missing fields so display can show the entry
     calledAt: existing.calledAt || now,
@@ -1479,7 +1497,7 @@ app.post('/api/queue/status', (req, res) => {
     ...(servicePoint && !existing.servicePoint ? { servicePoint } : {}),
   }
   saveTodayCalls(calls)
-  broadcast({ type: 'queue:status', data: { vn, status, ...calls[vn] } })
+  broadcast({ type: 'queue:status', data: { vn, status, ...calls[key] } })
   res.json({ success: true })
 })
 
@@ -1801,7 +1819,10 @@ async function runServerSidePrewarm() {
     const rows = await queryDB(settings, mysql, pg, [today])
     const currentCalls = getTodayCalls()
     const waiting = rows
-      .filter(r => !currentCalls[r.vn] || currentCalls[r.vn].status === 'waiting')
+      .filter(r => {
+        const c = getCallFor(currentCalls, r.vn, r.queue_slot)
+        return !c || c.status === 'waiting'
+      })
       .slice(0, 5)
     if (waiting.length === 0) return
     const allSPs = loadServicePoints().map(sp => sp.id)
