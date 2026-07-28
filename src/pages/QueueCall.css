@@ -819,6 +819,7 @@
 .vb-appt { background: rgba(13,71,161,0.1); color: #1565C0; border: 1px solid rgba(13,71,161,0.2); }
 .vb-walk { background: rgba(46,125,50,0.1); color: #2E7D32; border: 1px solid rgba(46,125,50,0.2); }
 .qc-ost-label { margin-top: 4px; font-size: 11px; color: #C62828; font-weight: 600; white-space: nowrap; }
+.qc-name-doctor { margin-top: 3px; font-size: 11px; color: #1565C0; font-weight: 600; }
 
 .qc-action-group { display: flex; gap: 5px; align-items: center; flex-wrap: nowrap; }
 

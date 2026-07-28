@@ -1281,7 +1281,12 @@ export default function QueueCallPage() {
                       {(mode === 'slot' || mode === 'slot_cur') && <td className="qc-td-center"><span className="qc-slot-pill">{q.queue_slot ?? '—'}</span></td>}
                       <td className="qc-td-center"><span className="qc-qno-pill">{q.queue_no || '—'}</span></td>
                       <td className="qc-td-hn"><span>{q.hn || '—'}</span></td>
-                      <td className="qc-td-name">{q.queue_name || '—'}</td>
+                      <td className="qc-td-name">
+                        {q.queue_name || '—'}
+                        {q.visit_type === 'appt' && q.doctor_name && (
+                          <div className="qc-name-doctor">แพทย์ : {q.doctor_name}</div>
+                        )}
+                      </td>
                       <td className="qc-td-ins">{q.insurance || '—'}</td>
                       <td className="qc-td-dep">{q.department || '—'}</td>
                       <td className="qc-td-center">
