@@ -598,13 +598,20 @@ export default function QueueCallPage() {
     setFilterDepts(prev => prev.includes(dept) ? prev.filter(d => d !== dept) : [...prev, dept])
 
   // Doctor list scoped to the currently selected ห้องตรวจ (filterDepts) — same relationship as
-  // the "ห้องตรวจ" filter itself, so picking a department narrows which doctors show up here.
-  // Queue_Prefix's filterDepts holds slot-doctor/category names, not real departments, so that
-  // scoping can't apply here — show the full unscoped doctor list for that mode instead.
+  // the "ห้องตรวจ" filter itself, so picking a room narrows which doctors show up here.
+  // Queue_Prefix's filterDepts holds slot-doctor/category names, not real departments, so it
+  // can't scope against the /appointment-doctors endpoint's department field — instead derive
+  // the list directly from today's own queue rows (each already carries its own doctor_name),
+  // filtered the same way as the ห้องตรวจ dropdown itself. This also means a doctor only shows
+  // up here when they actually have a patient in the filtered room, matching doctorPatientCount.
   const doctorsInScope = Array.from(new Set(
-    (mode === 'slot' || filterDepts.length === 0 ? doctorList : doctorList.filter(d => filterDepts.includes(d.department)))
-      .map(d => d.doctor_name)
-      .filter(Boolean)
+    (mode === 'slot'
+      ? activeQueues
+          .filter(q => q.visit_type === 'appt' && (filterDepts.length === 0 || filterDepts.includes(roomKeyOf(q))))
+          .map(q => q.doctor_name)
+      : (filterDepts.length === 0 ? doctorList : doctorList.filter(d => filterDepts.includes(d.department)))
+          .map(d => d.doctor_name)
+    ).filter((name): name is string => !!name)
   )).sort()
 
   const toggleDoctor = (name: string) =>
@@ -1185,7 +1192,7 @@ export default function QueueCallPage() {
                           <input type="checkbox" checked={selectedDoctors.length === 0} onChange={() => setSelectedDoctors([])} />
                           <span>แพทย์ทั้งหมด</span>
                           <span className="qc-dept-item-cnt">
-                            {activeQueues.filter(q => q.visit_type === 'appt' && (mode === 'slot' || filterDepts.length === 0 || filterDepts.includes(roomKeyOf(q)))).length}
+                            {activeQueues.filter(q => q.visit_type === 'appt' && (filterDepts.length === 0 || filterDepts.includes(roomKeyOf(q)))).length}
                           </span>
                         </label>
                         <div className="qc-dept-divider" />
