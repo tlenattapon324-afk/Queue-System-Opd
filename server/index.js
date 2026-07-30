@@ -1694,11 +1694,18 @@ app.get('/api/server-ip', (req, res) => {
 })
 
 app.get('/api/open-mini', (req, res) => {
-  if (typeof global.openMiniWindow === 'function') {
+  // global.openMiniWindow() opens a native BrowserWindow on THIS machine's own desktop — it can
+  // never appear on a different device's screen. A client on another PC/tablet reaching this
+  // server over the network (not localhost) would otherwise get told "opened" while the actual
+  // window pops up, invisible, back on the server machine. Only try it for local requests; every
+  // other client just renders the Mini UI directly in its own tab (the normal fallback below).
+  const ip = req.ip || req.socket.remoteAddress || ''
+  const isLocal = ip === '127.0.0.1' || ip === '::1' || ip === '::ffff:127.0.0.1'
+  if (isLocal && typeof global.openMiniWindow === 'function') {
     global.openMiniWindow()
     res.json({ success: true })
   } else {
-    res.json({ success: false, message: 'browser-mode' })
+    res.json({ success: false, message: isLocal ? 'browser-mode' : 'remote-client' })
   }
 })
 
