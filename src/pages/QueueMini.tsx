@@ -426,7 +426,7 @@ export default function QueueMiniPage() {
             {displayChannels.length > 0 && (
               <select className="qm-serve-sp-select" value={selectedChannel || displayChannels[0]}
                 onChange={e => setSelectedChannel(e.target.value)}>
-                {displayChannels.map(ch => <option key={ch} value={ch}>ช่อง {ch}</option>)}
+                {displayChannels.map(ch => <option key={ch} value={ch}>{ch}</option>)}
               </select>
             )}
           </div>

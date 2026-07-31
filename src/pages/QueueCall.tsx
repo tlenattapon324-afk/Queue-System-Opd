@@ -771,7 +771,7 @@ export default function QueueCallPage() {
                 >
                   <span className="qc-display-trigger-text">
                     {useDisplayChannels
-                      ? `ช่อง ${servicePointId || displayChannels[0] || ''}`
+                      ? (servicePointId || displayChannels[0] || '')
                       : (servicePoints.find(sp => sp.id === servicePointId)?.name || servicePoints[0]?.name || '— เลือก —')
                     }
                   </span>
@@ -816,7 +816,7 @@ export default function QueueCallPage() {
                             onClick={() => { setServicePointId(ch); setShowChannelMenu(false) }}
                           >
                             <span className="qc-display-item-icon">🏥</span>
-                            <span className="qc-display-item-name">ช่อง {ch}</span>
+                            <span className="qc-display-item-name">{ch}</span>
                           </div>
                         )) : filteredSPs.map(sp => (
                           <div
@@ -1480,7 +1480,7 @@ export default function QueueCallPage() {
           <div className="qc-check-display-inner">
             <div className="qc-check-display-icon">🖥️</div>
             <div className="qc-check-display-no">{checkDisplayPopup.queueNo}</div>
-            <div className="qc-check-display-sp">ช่อง {checkDisplayPopup.sp}</div>
+            <div className="qc-check-display-sp">{checkDisplayPopup.sp}</div>
             <div className="qc-check-display-msg">กรุณาตรวจสอบจุดแสดงคิว</div>
           </div>
         </div>

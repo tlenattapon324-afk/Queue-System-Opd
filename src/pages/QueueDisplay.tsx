@@ -1083,7 +1083,7 @@ export default function QueueDisplayPage() {
                   <span className="qd-cb-patient-name" style={{ color: config.queueColor }}>{cbPatientName}</span>
                 )}
                 <span className="qd-cb-sp-label" style={{ background: config.tableHeaderBg, color: config.tableHeaderColor, fontSize: `${config.cbSpLabelFontSize}vw` }}>
-                  ช่อง {lastCalled.sp}
+                  {lastCalled.sp}
                 </span>
               </div>
             ) : (
@@ -1272,7 +1272,7 @@ export default function QueueDisplayPage() {
                         </span>
                       </div>
                       <div className="qd-noshow-sp">
-                        ช่อง {item.servicePoint} · {item.calledAt}
+                        {item.servicePoint} · {item.calledAt}
                       </div>
                     </div>
                   )
