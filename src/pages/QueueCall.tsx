@@ -363,12 +363,16 @@ export default function QueueCallPage() {
     return () => document.removeEventListener('mousedown', handler)
   }, [showChannelMenu])
 
-  // Auto-select ช่องแรกเมื่อเลือก display และยังไม่มีช่องที่เลือก
+  // Auto-select ช่องแรกเมื่อเลือก display และยังไม่มีช่องที่เลือก — also re-runs when the display's
+  // OWN channel list changes (e.g. renamed in "จัดการหน้าจอแสดงคิว"), not just when switching
+  // displays, so a stale channel id (like "1" after channels were renamed to "โต๊ะ 1") gets
+  // corrected instead of silently sticking around in the dropdown.
+  const displayChannelsKey = displayChannels.join(',')
   useEffect(() => {
     if (selectedDisplayId && displayChannels.length > 0 && !displayChannels.includes(servicePointId)) {
       setServicePointId(displayChannels[0])
     }
-  }, [selectedDisplayId]) // eslint-disable-line react-hooks/exhaustive-deps
+  }, [selectedDisplayId, displayChannelsKey]) // eslint-disable-line react-hooks/exhaustive-deps
 
   // โหลด filterDepts ของจอที่เลือก จาก qd-config
   useEffect(() => {

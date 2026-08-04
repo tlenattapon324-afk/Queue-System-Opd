@@ -1,6 +1,6 @@
 import { useState, useEffect, useCallback } from 'react'
 import { useNavigate } from 'react-router-dom'
-import { getQueueList, callQueue, updateQueueStatus, getServicePoints, getCallsToday, type CallEntry } from '../lib/api'
+import { getQueueList, callQueue, updateQueueStatus, getServicePoints, getDisplayConfigs, getCallsToday, type CallEntry } from '../lib/api'
 import './QueueHistory.css'
 
 type HistoryMode = 'slot' | 'opd' | 'cur_dep' | 'slot_cur'
@@ -23,6 +23,10 @@ export default function QueueHistoryPage() {
   const [loading, setLoading] = useState(false)
   const [servicePoints, setServicePoints] = useState<ServicePoint[]>([])
   const [servicePoint, setServicePoint] = useState(sessionStorage.getItem('lastSP') || '')
+  // Which display's TTS voice/settings to use when recalling — shares the same localStorage key
+  // the main queue-call page keeps live-synced, so picking a display here (or there) carries over.
+  const [displayConfigs, setDisplayConfigs] = useState<DisplayConfigItem[]>([])
+  const [selectedDisplayId, setSelectedDisplayId] = useState(() => localStorage.getItem('qc_active_display') || '')
   // Default to showing ALL departments — history should show everything by default,
   // not silently inherit the call page's single-dept filter (which can hide all data
   // if the done/skip records belong to a different department than what's filtered there)
@@ -70,6 +74,37 @@ export default function QueueHistoryPage() {
     })
   }, [])
 
+  useEffect(() => { getDisplayConfigs().then(setDisplayConfigs) }, [])
+
+  // Live-sync with the main queue-call page — matches the pattern it already uses for Mini.
+  useEffect(() => {
+    try { localStorage.setItem('qc_active_display', selectedDisplayId) } catch {}
+  }, [selectedDisplayId])
+  useEffect(() => {
+    const handler = (e: StorageEvent) => {
+      if (e.key === 'qc_active_display') setSelectedDisplayId(e.newValue || '')
+    }
+    window.addEventListener('storage', handler)
+    return () => window.removeEventListener('storage', handler)
+  }, [])
+
+  const selectedDisplay = displayConfigs.find(d => d.id === selectedDisplayId)
+  const displayChannels = selectedDisplay?.channels || []
+  const useDisplayChannels = selectedDisplayId !== '' && displayChannels.length > 0
+
+  // When a display with its own channels is picked, "ช่องที่ใช้เรียกซ้ำ" should offer THAT
+  // display's channels instead of the global service-point list — keeps the value consistent
+  // with the channel names actually announced on this display. Falls back to the first global
+  // service point again if the display is cleared (or its channels no longer include the
+  // currently selected value).
+  useEffect(() => {
+    if (useDisplayChannels) {
+      setServicePoint(prev => (prev && displayChannels.includes(prev)) ? prev : displayChannels[0])
+    } else {
+      setServicePoint(prev => (prev && servicePoints.some(s => s.name === prev)) ? prev : (servicePoints[0]?.name || ''))
+    }
+  }, [useDisplayChannels, displayChannels, servicePoints])
+
   const deptOptions = Array.from(new Set(queues.map(q => q.department).filter(Boolean))).sort()
   const doneQueues    = queues.filter(q => q.status === 'done'    && (!filterDept || q.department === filterDept))
   const skipQueues    = queues.filter(q => q.status === 'skip'    && (!filterDept || q.department === filterDept))
@@ -86,7 +121,9 @@ export default function QueueHistoryPage() {
     try {
       // queue_slot is unique per opd_qs_slot row — a VN can have multiple rows (one per
       // doctor/service point), so calling by bare VN could recall a different doctor's slot.
-      const res = await callQueue(q.queue_slot || q.vn, servicePoint, mode)
+      // Without a displayConfigId the server falls back to the global default qd-config for
+      // TTS, which can use a different voice than the display this queue actually belongs to.
+      const res = await callQueue(q.queue_slot || q.vn, servicePoint, mode, selectedDisplayId || undefined)
       if (res.success) {
         const calledAt = new Date().toLocaleTimeString('th-TH', { hour: '2-digit', minute: '2-digit' })
         setCallTimeMap(prev => ({
@@ -210,12 +247,25 @@ export default function QueueHistoryPage() {
             </select>
           </div>
           <div className="qh-sp-wrap">
+            <span className="qh-sp-label">จอแสดงคิว:</span>
+            <select className="qh-sp-select" value={selectedDisplayId}
+              onChange={e => setSelectedDisplayId(e.target.value)}>
+              <option value="">— ค่าเริ่มต้นระบบ —</option>
+              {displayConfigs.map(d => (
+                <option key={d.id} value={d.id}>{d.name}</option>
+              ))}
+            </select>
+          </div>
+          <div className="qh-sp-wrap">
             <span className="qh-sp-label">ช่องที่ใช้เรียกซ้ำ:</span>
             <select className="qh-sp-select" value={servicePoint}
               onChange={e => { setServicePoint(e.target.value); sessionStorage.setItem('lastSP', e.target.value) }}>
-              {servicePoints.map(sp => (
-                <option key={sp.id} value={sp.name}>{sp.name}</option>
-              ))}
+              {useDisplayChannels
+                ? displayChannels.map(ch => <option key={ch} value={ch}>{ch}</option>)
+                : servicePoints.map(sp => (
+                    <option key={sp.id} value={sp.name}>{sp.name}</option>
+                  ))
+              }
             </select>
           </div>
           <button className="qh-refresh-btn" onClick={load} disabled={loading} title="รีเฟรช">

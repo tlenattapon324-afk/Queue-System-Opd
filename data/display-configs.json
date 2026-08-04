@@ -4,7 +4,7 @@
     "name": "ซักประวัติตรวจโรคทั่วไป",
     "bgColor": "#f67104",
     "textColor": "#FFFFFF",
-    "queueColor": "#00BCD4",
+    "queueColor": "#020a7e",
     "font": "Sarabun",
     "fontSize": 120,
     "title": "ระบบคิวผู้ป่วยนอก-ตรวจโรคทั่วไป",
@@ -15,10 +15,10 @@
     "animationType": "scale",
     "soundEnabled": true,
     "channels": [
-      "โต๊ะ 1",
-      "โต๊ะ 2",
-      "โต๊ะ 3",
-      "โต๊ะ 4"
+      "1",
+      "2",
+      "3",
+      "4"
     ]
   }
 ]
