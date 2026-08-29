@@ -63,9 +63,13 @@ export default function FloatingMini() {
   }, [state, loadQueues])
 
   useEffect(() => {
-    const off = onQueueCalled(data => { setCurrentCalled(data); loadQueues() })
+    const off = onQueueCalled(data => {
+      // อัปเดตกล่อง "กำลังให้บริการ" เฉพาะคิวที่เรียกจากช่องบริการของเครื่องนี้ ไม่ให้ช่องอื่นมาทับ
+      if (data.servicePoint === currentSpName) setCurrentCalled(data)
+      loadQueues()
+    })
     return off
-  }, [loadQueues])
+  }, [loadQueues, currentSpName])
 
   const flash = (ok: boolean, text: string) => {
     setMsg({ ok, text })

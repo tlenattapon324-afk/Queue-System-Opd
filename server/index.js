@@ -214,17 +214,50 @@ app.use(express.json())
 
 // Serve built frontend (supports env override for packaged Electron app)
 const RENDERER_DIR = process.env.RENDERER_DIR || path.join(__dirname, '..', 'out', 'renderer')
-if (fs.existsSync(RENDERER_DIR)) {
-  // index.html: no-cache so browsers always load the latest build
-  app.get('/index.html', (req, res) => {
+
+// index.html is served dynamically (not by express.static) so the current API token can be
+// stamped into it as window.__API_TOKEN__ on every load — that's how the browser UI ends up
+// carrying the token on its /api/* calls (see src/lib/api.ts) without the user ever seeing it.
+function serveIndexWithToken(req, res) {
+  const indexFile = path.join(RENDERER_DIR, 'index.html')
+  if (!fs.existsSync(indexFile)) return res.status(404).send('Build the renderer first: npm run build')
+  try {
+    const token = loadSettings()?.apiToken || ''
+    const html = fs.readFileSync(indexFile, 'utf-8')
+      .replace('<head>', `<head><script>window.__API_TOKEN__=${JSON.stringify(token)}<\/script>`)
     res.set('Cache-Control', 'no-cache, no-store, must-revalidate')
-    res.sendFile(path.join(RENDERER_DIR, 'index.html'))
-  })
-  app.use(express.static(RENDERER_DIR))
+    res.set('Content-Type', 'text/html; charset=utf-8')
+    res.send(html)
+  } catch {
+    res.set('Cache-Control', 'no-cache, no-store, must-revalidate')
+    res.sendFile(indexFile)
+  }
+}
+
+if (fs.existsSync(RENDERER_DIR)) {
+  app.get(['/', '/index.html'], serveIndexWithToken)
+  // index: false — index.html must go through serveIndexWithToken above, not be auto-served here
+  app.use(express.static(RENDERER_DIR, { index: false }))
 }
 
 // Serve TTS audio cache
 app.use('/tts-audio', express.static(TTS_CACHE_DIR))
+
+// ─── API token gate ────────────────────────────────────────────────────────────
+// Protects every /api/* route from being called directly (e.g. a URL copied out of devtools and
+// replayed in Postman) once a token has been generated on the connection-settings screen. Until
+// then (settings.apiToken unset — the default/fresh-install state) this is a no-op, so it can
+// never lock an unconfigured install out of its own setup screens. The browser UI never has to
+// know this exists: the token rides along automatically via the window.fetch patch in
+// src/lib/api.ts, fed by the value serveIndexWithToken stamps into the page above.
+function requireApiToken(req, res, next) {
+  const configuredToken = loadSettings()?.apiToken
+  if (!configuredToken) return next()
+  const provided = req.get('X-API-Token') || req.query.token
+  if (provided === configuredToken) return next()
+  res.status(401).json({ success: false, message: 'Unauthorized: missing or invalid API token' })
+}
+app.use('/api', requireApiToken)
 
 
 // ─── Server-side TTS (Microsoft Edge Neural + SAPI fallback) ─────────────────
@@ -944,6 +977,46 @@ app.post('/api/auth/login', async (req, res) => {
   }
 })
 
+// officer → officer_group_list → officer_group → officer_group_task_access: standard HOSxP
+// permission model — an officer belongs to one or more groups, each group is granted access to
+// a set of task ids. Used to gate the connection-settings screen to officer_task_id '77'.
+const OFFICER_TASK_ACCESS_SQL_MYSQL = `
+SELECT l.officer_id
+FROM officer_group_task_access t
+LEFT OUTER JOIN officer_group g ON g.officer_group_id = t.officer_group_id
+LEFT OUTER JOIN officer_group_list l ON l.officer_group_id = g.officer_group_id
+LEFT OUTER JOIN officer o ON o.officer_id = l.officer_id
+WHERE o.officer_login_name = ? AND t.officer_task_id = ?
+LIMIT 1`
+
+const OFFICER_TASK_ACCESS_SQL_PG = `
+SELECT l.officer_id
+FROM officer_group_task_access t
+LEFT OUTER JOIN officer_group g ON g.officer_group_id = t.officer_group_id
+LEFT OUTER JOIN officer_group_list l ON l.officer_group_id = g.officer_group_id
+LEFT OUTER JOIN officer o ON o.officer_id = l.officer_id
+WHERE o.officer_login_name = $1 AND t.officer_task_id = $2
+LIMIT 1`
+
+app.post('/api/auth/task-access', async (req, res) => {
+  const { username, taskId } = req.body
+  const settings = loadSettings()
+  if (!settings) return res.json({ success: false, hasAccess: false, message: 'ยังไม่ได้ตั้งค่าการเชื่อมต่อ' })
+  if (!username || !taskId) return res.json({ success: false, hasAccess: false, message: 'ข้อมูลไม่ครบถ้วน' })
+
+  try {
+    const rows = await queryDB(
+      settings,
+      OFFICER_TASK_ACCESS_SQL_MYSQL,
+      OFFICER_TASK_ACCESS_SQL_PG,
+      [username, String(taskId)]
+    )
+    res.json({ success: true, hasAccess: !!(rows && rows.length > 0) })
+  } catch (e) {
+    res.json({ success: false, hasAccess: false, message: e.message })
+  }
+})
+
 // ─── Queue status (today's calls, file-based) ─────────────────────────────────
 
 const QUEUE_CALLS_FILE = path.join(DATA_DIR, 'queue-calls-today.json')
@@ -1007,6 +1080,7 @@ SELECT ov.vstdate, ov.vsttime,
         THEN 'appt' ELSE 'walkin'
     END AS visit_type,
     (SELECT d.name FROM oapp oa2 LEFT JOIN doctor d ON d.code = oa2.doctor WHERE oa2.hn = ov.hn AND oa2.nextdate = ov.vstdate AND oa2.depcode = ov.main_dep LIMIT 1) AS doctor_name,
+    (SELECT c.name FROM oapp oa3 LEFT JOIN clinic c ON c.clinic = oa3.clinic WHERE oa3.hn = ov.hn AND oa3.nextdate = ov.vstdate AND oa3.depcode = ov.main_dep LIMIT 1) AS clinic_name,
     ist.name AS ist_name,
     ost.name AS ost_name
 FROM opd_qs_slot os
@@ -1037,6 +1111,7 @@ SELECT ov.vstdate, ov.vsttime,
         THEN 'appt' ELSE 'walkin'
     END AS visit_type,
     (SELECT d.name FROM oapp oa2 LEFT JOIN doctor d ON d.code = oa2.doctor WHERE oa2.hn = ov.hn AND oa2.nextdate = ov.vstdate AND oa2.depcode = ov.main_dep LIMIT 1) AS doctor_name,
+    (SELECT c.name FROM oapp oa3 LEFT JOIN clinic c ON c.clinic = oa3.clinic WHERE oa3.hn = ov.hn AND oa3.nextdate = ov.vstdate AND oa3.depcode = ov.main_dep LIMIT 1) AS clinic_name,
     ist.name AS ist_name,
     ost.name AS ost_name
 FROM opd_qs_slot os
@@ -1068,6 +1143,7 @@ SELECT ov.vstdate, ov.vsttime,
         THEN 'appt' ELSE 'walkin'
     END AS visit_type,
     (SELECT d.name FROM oapp oa2 LEFT JOIN doctor d ON d.code = oa2.doctor WHERE oa2.hn = ov.hn AND oa2.nextdate = ov.vstdate AND oa2.depcode = ov.cur_dep LIMIT 1) AS doctor_name,
+    (SELECT c.name FROM oapp oa3 LEFT JOIN clinic c ON c.clinic = oa3.clinic WHERE oa3.hn = ov.hn AND oa3.nextdate = ov.vstdate AND oa3.depcode = ov.cur_dep LIMIT 1) AS clinic_name,
     ist.name AS ist_name,
     ost.name AS ost_name
 FROM opd_qs_slot os
@@ -1096,6 +1172,7 @@ SELECT ov.vstdate, ov.vsttime,
         THEN 'appt' ELSE 'walkin'
     END AS visit_type,
     (SELECT d.name FROM oapp oa2 LEFT JOIN doctor d ON d.code = oa2.doctor WHERE oa2.hn = ov.hn AND oa2.nextdate = ov.vstdate AND oa2.depcode = ov.cur_dep LIMIT 1) AS doctor_name,
+    (SELECT c.name FROM oapp oa3 LEFT JOIN clinic c ON c.clinic = oa3.clinic WHERE oa3.hn = ov.hn AND oa3.nextdate = ov.vstdate AND oa3.depcode = ov.cur_dep LIMIT 1) AS clinic_name,
     ist.name AS ist_name,
     ost.name AS ost_name
 FROM opd_qs_slot os
@@ -1124,6 +1201,7 @@ SELECT ov.vstdate, ov.vsttime,
         THEN 'appt' ELSE 'walkin'
     END AS visit_type,
     (SELECT d.name FROM oapp oa2 LEFT JOIN doctor d ON d.code = oa2.doctor WHERE oa2.hn = ov.hn AND oa2.nextdate = ov.vstdate AND oa2.depcode = ov.main_dep LIMIT 1) AS doctor_name,
+    (SELECT c.name FROM oapp oa3 LEFT JOIN clinic c ON c.clinic = oa3.clinic WHERE oa3.hn = ov.hn AND oa3.nextdate = ov.vstdate AND oa3.depcode = ov.main_dep LIMIT 1) AS clinic_name,
     ist.name AS ist_name,
     ost.name AS ost_name
 FROM ovst ov
@@ -1148,6 +1226,7 @@ SELECT ov.vstdate, ov.vsttime,
         THEN 'appt' ELSE 'walkin'
     END AS visit_type,
     (SELECT d.name FROM oapp oa2 LEFT JOIN doctor d ON d.code = oa2.doctor WHERE oa2.hn = ov.hn AND oa2.nextdate = ov.vstdate AND oa2.depcode = ov.main_dep LIMIT 1) AS doctor_name,
+    (SELECT c.name FROM oapp oa3 LEFT JOIN clinic c ON c.clinic = oa3.clinic WHERE oa3.hn = ov.hn AND oa3.nextdate = ov.vstdate AND oa3.depcode = ov.main_dep LIMIT 1) AS clinic_name,
     ist.name AS ist_name,
     ost.name AS ost_name
 FROM ovst ov
@@ -1174,6 +1253,7 @@ SELECT ov.vstdate, ov.vsttime,
         THEN 'appt' ELSE 'walkin'
     END AS visit_type,
     (SELECT d.name FROM oapp oa2 LEFT JOIN doctor d ON d.code = oa2.doctor WHERE oa2.hn = ov.hn AND oa2.nextdate = ov.vstdate AND oa2.depcode = ov.cur_dep LIMIT 1) AS doctor_name,
+    (SELECT c.name FROM oapp oa3 LEFT JOIN clinic c ON c.clinic = oa3.clinic WHERE oa3.hn = ov.hn AND oa3.nextdate = ov.vstdate AND oa3.depcode = ov.cur_dep LIMIT 1) AS clinic_name,
     ist.name AS ist_name,
     ost.name AS ost_name
 FROM ovst ov
@@ -1198,6 +1278,7 @@ SELECT ov.vstdate, ov.vsttime,
         THEN 'appt' ELSE 'walkin'
     END AS visit_type,
     (SELECT d.name FROM oapp oa2 LEFT JOIN doctor d ON d.code = oa2.doctor WHERE oa2.hn = ov.hn AND oa2.nextdate = ov.vstdate AND oa2.depcode = ov.cur_dep LIMIT 1) AS doctor_name,
+    (SELECT c.name FROM oapp oa3 LEFT JOIN clinic c ON c.clinic = oa3.clinic WHERE oa3.hn = ov.hn AND oa3.nextdate = ov.vstdate AND oa3.depcode = ov.cur_dep LIMIT 1) AS clinic_name,
     ist.name AS ist_name,
     ost.name AS ost_name
 FROM ovst ov
@@ -1710,14 +1791,7 @@ app.get('/api/open-mini', (req, res) => {
 })
 
 // Fallback: serve index.html for SPA routing (Express 4 & 5 compatible)
-app.use((req, res) => {
-  const indexFile = path.join(RENDERER_DIR, 'index.html')
-  if (fs.existsSync(indexFile)) {
-    res.sendFile(indexFile)
-  } else {
-    res.status(404).send('Build the renderer first: npm run build')
-  }
-})
+app.use((req, res) => serveIndexWithToken(req, res))
 
 // ─── WebSocket ────────────────────────────────────────────────────────────────
 

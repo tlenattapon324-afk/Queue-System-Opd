@@ -1,6 +1,29 @@
 import { useState, useEffect, useCallback, useRef } from 'react'
+import { createPortal } from 'react-dom'
 import { getQueueList, callQueue, onQueueCalled, onQueueAudio, updateQueueStatus, getDisplayConfigs, getDisplayQDConfig, getCallsToday, prewarmTTS } from '../lib/api'
 import './QueueMini.css'
+
+// Copies the current document's stylesheets into a Document Picture-in-Picture window, which
+// always starts with an empty <head> — without this the portaled content would render unstyled.
+function copyStylesInto(doc: Document) {
+  Array.from(document.styleSheets).forEach(sheet => {
+    try {
+      const rules = Array.from(sheet.cssRules).map(r => r.cssText).join('\n')
+      const style = doc.createElement('style')
+      style.textContent = rules
+      doc.head.appendChild(style)
+    } catch {
+      // Cross-origin sheet — cssRules access throws; link it in instead.
+      if (sheet.href) {
+        const link = doc.createElement('link')
+        link.rel = 'stylesheet'
+        link.href = sheet.href
+        doc.head.appendChild(link)
+      }
+    }
+  })
+  doc.body.style.margin = '0'
+}
 
 type QueueStatus = 'waiting' | 'calling' | 'done' | 'skip'
 type QueueRow = QueueItem & { status: QueueStatus }
@@ -49,6 +72,11 @@ export default function QueueMiniPage() {
   // instead of showing the actual calling UI.
   const isElectronWindow = navigator.userAgent.includes('Electron') || window.location.hash.includes('electron=1')
   const [electronOpened, setElectronOpened] = useState(false)
+  const [minimized, setMinimized] = useState(false)
+  // Browser-mode "lock": the calling panel is portaled into this Document Picture-in-Picture
+  // window instead of living in the popup's own document — a real always-on-top floating window
+  // that never falls behind other apps, without ever going fullscreen.
+  const [pipWindow, setPipWindow] = useState<Window | null>(null)
   const lastCalledVnRef = useRef<string | null>(null)
   const currentSpNameRef = useRef<string>('')
   const selectedDisplayIdRef = useRef<string>('')
@@ -57,6 +85,7 @@ export default function QueueMiniPage() {
   const keepFocusRef = useRef(false)
   const keepFocusTimerRef = useRef<ReturnType<typeof setTimeout> | null>(null)
   const lockedRef = useRef(true)
+  const popupBoundsRef = useRef<{ x: number; y: number; w: number; h: number } | null>(null)
 
   const selectedDisplay = displayConfigs.find(d => d.id === selectedDisplayId)
   const displayChannels: string[] = selectedDisplay?.channels || []
@@ -99,7 +128,8 @@ export default function QueueMiniPage() {
         }
         setCurrentCalled(prev => {
           if (prev) return prev
-          const callingRows = rows.filter(r => r.status === 'calling')
+          // จำกัดเฉพาะแถวที่กำลังเรียกโดยช่องบริการของเครื่องนี้ ไม่เอาของช่องอื่นมาแสดง
+          const callingRows = rows.filter(r => r.status === 'calling' && r.service_point === currentSpNameRef.current)
           if (!callingRows.length) return null
           // A VN can have multiple opd_qs_slot rows (Queue_Prefix) each with their own call
           // entry — match by queue_slot too when the row has one, not vn alone.
@@ -127,23 +157,156 @@ export default function QueueMiniPage() {
   // Sync locked state to ref (for use inside event handlers)
   useEffect(() => { lockedRef.current = locked }, [locked])
 
-  // Lock = fullscreen (OS blocks minimize in fullscreen — the only reliable browser solution)
+  // The Document PiP window's content is portaled out of THIS popup's own document — but the
+  // popup itself (the "opener") can't be closed while PiP is active (Chrome auto-closes the PiP
+  // window the moment its opener closes/navigates — that's a hard requirement of the API, not a
+  // bug), so it's always left behind as a second window. Browsers also enforce a minimum popup
+  // size that's well above anything that could pass as "invisible," so rather than fight that and
+  // end up with a stray, unexplained-looking box, park it as a clearly-labelled small anchor
+  // window off to the side (not hidden away, just out of the way and self-explanatory) — see the
+  // "qm-anchor-note" render below.
+  const parkOpener = () => {
+    try {
+      const w = 280, h = 96
+      window.resizeTo(w, h)
+      window.moveTo(Math.max(0, window.screen.availWidth - w - 16), 16)
+    } catch {}
+  }
+  const restoreOpener = () => {
+    try {
+      const w = 400, h = 640
+      window.resizeTo(w, h)
+      window.moveTo(
+        Math.max(0, window.screen.availWidth - w - 20),
+        Math.max(0, window.screen.availHeight - h - 60)
+      )
+    } catch {}
+  }
+
+  // Opens a Document Picture-in-Picture window of the given size, styled to match this page, and
+  // wires it to clear lock/minimize state if the user closes it directly (its native close button).
+  // Minimize/restore close-and-reopen a PiP at a different size — pagehide for the OLD window can
+  // still fire after the NEW one is already in state, so it must only clear state if it's still
+  // the current window (otherwise it wipes out the swap it wasn't meant to affect).
+  const openPip = async (width: number, height: number): Promise<Window | null> => {
+    const dpip = window.documentPictureInPicture
+    if (!dpip) return null
+    const pip = await dpip.requestWindow({ width, height })
+    copyStylesInto(pip.document)
+    pip.addEventListener('pagehide', () => {
+      setPipWindow(curr => {
+        if (curr !== pip) return curr
+        setLocked(false)
+        setMinimized(false)
+        restoreOpener()
+        return null
+      })
+    }, { once: true })
+    setPipWindow(pip)
+    parkOpener()
+    return pip
+  }
+
+  // Lock:
+  // - Electron window: fullscreen, on top of the OS-level alwaysOnTop the window already has.
+  // - Browser popup: move the panel into a Document Picture-in-Picture window — a real
+  //   always-on-top floating window that never falls behind other apps and never goes fullscreen.
   const handleLockToggle = async () => {
+    if (isElectronWindow) {
+      if (!locked) {
+        try {
+          await document.documentElement.requestFullscreen()
+          setLocked(true)
+        } catch (e) {
+          flash(false, `ล็อกเต็มจอไม่สำเร็จ: ${e instanceof Error ? e.message : String(e)}`)
+        }
+      } else {
+        try { if (document.fullscreenElement) await document.exitFullscreen() } catch {}
+        setLocked(false)
+      }
+      return
+    }
     if (!locked) {
-      try { await document.documentElement.requestFullscreen() } catch {}
-      setLocked(true)
+      if (!window.documentPictureInPicture) {
+        flash(false, 'เบราว์เซอร์นี้ไม่รองรับการล็อกลอยบนสุด (ต้องใช้ Chrome/Edge รุ่นใหม่)')
+        return
+      }
+      try {
+        await openPip(400, 640)
+        setLocked(true)
+      } catch (e) {
+        flash(false, `ล็อกไม่สำเร็จ: ${e instanceof Error ? e.message : String(e)}`)
+      }
     } else {
-      try { if (document.fullscreenElement) await document.exitFullscreen() } catch {}
+      pipWindow?.close()
+      setPipWindow(null)
       setLocked(false)
+      restoreOpener()
     }
   }
 
-  // Sync lock state when user exits fullscreen via Esc
+  // Sync lock state when user exits Electron fullscreen via Esc
   useEffect(() => {
     const onFsChange = () => { if (!document.fullscreenElement) setLocked(false) }
     document.addEventListener('fullscreenchange', onFsChange)
     return () => document.removeEventListener('fullscreenchange', onFsChange)
   }, [])
+
+  // Shrink to a small floating icon so the Mini window stops covering the screen. Minimizing
+  // always pins it via PiP when the browser supports that — the whole point of shrinking it out
+  // of the way is that it stays reachable, so it shouldn't need a separate manual lock step first
+  // (and if it was a plain unlocked popup, it very visibly "disappears" the moment focus moves
+  // elsewhere, which is exactly the complaint this avoids).
+  // - Real Electron window: shrinks the actual OS window via IPC (already alwaysOnTop natively).
+  // - Browser + PiP supported: swap to a small PiP window — a PiP window can't be resized in
+  //   place, only replaced with a new one, so this closes the current one and opens a smaller one.
+  // - Browser without PiP support: shrink the actual popup window via resizeTo/moveTo (only works
+  //   because it was opened via window.open from the NavBar "Mini" button — browsers allow a
+  //   script-opened window to resize/move itself). A plain tab just falls back to the bubble view.
+  // setMinimized/setLocked are committed BEFORE the pip swap (not after) — createPortal renders
+  // into the new PiP window's document as soon as setPipWindow resolves, using whatever state is
+  // current at that moment. Flipping minimized only afterward left a window where the wrong-sized
+  // content (the full panel, or just the bubble) could get portaled into the new window first and
+  // only correct itself a beat later — which is what showed up as the cut-off/blank-space glitch.
+  const ICON_INNER = 90
+  const handleMinimizeToIcon = async () => {
+    setMinimized(true)
+    if (isElectronWindow) {
+      if (document.fullscreenElement) { try { await document.exitFullscreen() } catch {} }
+      window.electronAPI?.minimizeMiniWindow?.()
+    } else if (pipWindow || window.documentPictureInPicture) {
+      setLocked(true)
+      pipWindow?.close()
+      try { await openPip(ICON_INNER + 20, ICON_INNER + 20) } catch {}
+    } else {
+      try {
+        popupBoundsRef.current = { x: window.screenX, y: window.screenY, w: window.outerWidth, h: window.outerHeight }
+        const chromeW = window.outerWidth - window.innerWidth
+        const chromeH = window.outerHeight - window.innerHeight
+        const w = ICON_INNER + chromeW, h = ICON_INNER + chromeH
+        window.resizeTo(w, h)
+        window.moveTo(
+          Math.max(0, window.screen.availWidth - w - 16),
+          Math.max(0, window.screen.availHeight - h - 16)
+        )
+      } catch {}
+    }
+  }
+  const handleRestoreFromIcon = async () => {
+    setMinimized(false)
+    if (isElectronWindow) {
+      window.electronAPI?.restoreMiniWindow?.()
+    } else if (locked) {
+      pipWindow?.close()
+      try { await openPip(400, 640) } catch {}
+    } else {
+      try {
+        const b = popupBoundsRef.current
+        if (b) { window.resizeTo(b.w, b.h); window.moveTo(b.x, b.y) }
+        popupBoundsRef.current = null
+      } catch {}
+    }
+  }
 
   // Auto-open as locked Electron window when loaded in browser (not ?electron=1)
   useEffect(() => {
@@ -160,12 +323,15 @@ export default function QueueMiniPage() {
 
   useEffect(() => {
     const off = onQueueCalled(data => {
-      setCurrentCalled(data)
-      setQueues(prev => {
-        const row = prev.find(q => String(q.queue_slot || q.queue_no || '') === String(data.queueNo))
-        if (row) lastCalledVnRef.current = row.vn
-        return prev
-      })
+      // อัปเดตกล่อง "กำลังให้บริการ" เฉพาะคิวที่เรียกจากช่องบริการของเครื่องนี้ ไม่ให้ช่องอื่นมาทับ
+      if (data.servicePoint === currentSpNameRef.current) {
+        setCurrentCalled(data)
+        setQueues(prev => {
+          const row = prev.find(q => String(q.queue_slot || q.queue_no || '') === String(data.queueNo))
+          if (row) lastCalledVnRef.current = row.vn
+          return prev
+        })
+      }
       loadQueues()
     })
     return off
@@ -359,9 +525,29 @@ export default function QueueMiniPage() {
   const listQueues = listView ? queues.filter(q => q.status === listView && byDeptFilter(q)) : []
   const listLabel: Record<string, string> = { waiting: 'รอเรียก', done: 'เรียกแล้ว', skip: 'ไม่มา' }
 
+  // When locked in browser mode, the panel lives in the PiP window's document instead of this
+  // popup's own document — everything below still renders normally, just portaled over there.
+  // This window (the "opener") shows a small labelled anchor card instead, so the required-but-
+  // otherwise-empty leftover window reads as intentional rather than a stray glitchy box.
+  const renderOutput = (node: JSX.Element) => {
+    if (!pipWindow) return node
+    return (
+      <>
+        {createPortal(node, pipWindow.document.body)}
+        <div className="qm-anchor-note">
+          <span className="qm-anchor-dot" />
+          <div>
+            <div className="qm-anchor-title">Mini ลอยอยู่ที่มุมขวาล่างของจอ</div>
+            <div className="qm-anchor-sub">ห้ามปิดหน้าต่างนี้ — จำเป็นสำหรับให้ Mini ลอยอยู่บนสุดต่อไป</div>
+          </div>
+        </div>
+      </>
+    )
+  }
+
   // Show redirect page when Electron window was opened successfully
   if (electronOpened) {
-    return (
+    return renderOutput(
       <div className="qm-bg" style={{ alignItems: 'center', justifyContent: 'center', gap: 12 }}>
         <div style={{ fontSize: 52 }}>✅</div>
         <div style={{ fontSize: 18, fontWeight: 800, color: '#0D47A1' }}>เปิดหน้าต่าง Mini แล้ว</div>
@@ -372,7 +558,22 @@ export default function QueueMiniPage() {
     )
   }
 
-  return (
+  // Minimized: shrink to a small floating icon — click once to bring the calling panel back
+  if (minimized) {
+    return renderOutput(
+      <div className="qm-bubble-wrap" onClick={handleRestoreFromIcon} title="เปิดหน้าเรียกคิว">
+        <div className="qm-bubble-face">
+          {waiting > 0 && <span className="qm-bubble-badge">{waiting}</span>}
+          <svg width="30" height="30" viewBox="0 0 24 24" fill="none">
+            <rect x="3" y="3" width="18" height="18" rx="3" stroke="currentColor" strokeWidth="2" />
+            <path d="M8 12h8M8 8h5M8 16h3" stroke="currentColor" strokeWidth="2" strokeLinecap="round" />
+          </svg>
+        </div>
+      </div>
+    )
+  }
+
+  return renderOutput(
     <div className="qm-bg">
       <header className="qm-header">
         <div className="qm-header-left">
@@ -387,9 +588,22 @@ export default function QueueMiniPage() {
         <div className="qm-header-right">
           <span className="qm-clock">{clock.toLocaleTimeString('th-TH', { hour: '2-digit', minute: '2-digit', second: '2-digit' })}</span>
           <button
+            className="qm-minimize-btn"
+            onClick={handleMinimizeToIcon}
+            title="ย่อเป็นไอคอน — ลอยเล็กมุมจอ ไม่บังงานอื่น"
+          >
+            <svg width="12" height="12" viewBox="0 0 24 24" fill="none">
+              <path d="M5 12h14" stroke="currentColor" strokeWidth="2.5" strokeLinecap="round" />
+            </svg>
+          </button>
+          <button
             className={`qm-lock-btn${locked ? ' on' : ''}`}
             onClick={handleLockToggle}
-            title={locked ? 'เต็มจอ (กด Esc เพื่อออก)' : 'ล็อกหน้าจอ — เปิดเต็มจอป้องกันย่อ'}
+            title={
+              isElectronWindow
+                ? (locked ? 'เต็มจอ (กด Esc เพื่อออก)' : 'ล็อกหน้าจอ — เปิดเต็มจอป้องกันย่อ')
+                : (locked ? 'ล็อกอยู่ — ลอยบนสุดเสมอ (คลิกเพื่อปลดล็อก)' : 'ล็อก — ลอยอยู่บนสุดตลอด ไม่ต้องเต็มจอ')
+            }
           >{locked ? '🔒' : '🔓'}</button>
         </div>
       </header>

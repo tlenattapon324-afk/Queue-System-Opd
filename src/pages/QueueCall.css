@@ -606,6 +606,9 @@
 .qc-doctor-dropdown { position: relative; width: 260px; flex-shrink: 0; }
 .qc-doctor-dropdown.disabled { opacity: 0.5; }
 .qc-doctor-dropdown .qc-dept-trigger:disabled { cursor: not-allowed; }
+.qc-clinic-dropdown { position: relative; width: 260px; flex-shrink: 0; }
+.qc-clinic-dropdown.disabled { opacity: 0.5; }
+.qc-clinic-dropdown .qc-dept-trigger:disabled { cursor: not-allowed; }
 .qc-dept-trigger {
   display: flex; align-items: center; justify-content: space-between;
   width: 100%; padding: 9px 12px;
@@ -820,6 +823,8 @@
 .vb-walk { background: rgba(46,125,50,0.1); color: #2E7D32; border: 1px solid rgba(46,125,50,0.2); }
 .qc-ost-label { margin-top: 4px; font-size: 11px; color: #C62828; font-weight: 600; white-space: nowrap; }
 .qc-name-doctor { margin-top: 3px; font-size: 11px; color: #1565C0; font-weight: 600; }
+.qc-clinic-name { margin-top: 4px; font-size: 12px; color: #D32F2F; font-weight: 700; white-space: nowrap; }
+.qc-clinic-label { color: #0D47A1; }
 
 .qc-action-group { display: flex; gap: 5px; align-items: center; flex-wrap: nowrap; }
 

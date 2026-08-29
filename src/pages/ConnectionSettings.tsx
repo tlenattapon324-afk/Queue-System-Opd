@@ -1,6 +1,6 @@
 import { useState, useEffect } from 'react'
 import { useNavigate } from 'react-router-dom'
-import { loadSettings, saveSettings, testConnection, checkQueueOpdQsSlotTable, createQueueOpdQsSlotTable } from '../lib/api'
+import { loadSettings, saveSettings, testConnection, checkQueueOpdQsSlotTable, createQueueOpdQsSlotTable, login, checkTaskAccess } from '../lib/api'
 import './ConnectionSettings.css'
 
 const DEFAULT: DbSettings = {
@@ -9,29 +9,61 @@ const DEFAULT: DbSettings = {
   port: 3306,
   database: '',
   username: 'root',
-  password: ''
+  password: '',
+  hospitalCode: '',
+  apiToken: ''
 }
+
+// HOSxP task id that officer_group_task_access must grant for an officer to be treated as a
+// system administrator here — matches whatever task the hospital's own permission setup uses
+// for "ตั้งค่าระบบ" access.
+const ADMIN_TASK_ID = '77'
+
+// The server responds with this exact message from /api/auth/login when db-settings.json doesn't
+// exist yet — i.e. genuinely first-time setup, before any database (and therefore any officer) is
+// reachable at all. There's no admin identity to check in that state, so the gate lets it through
+// rather than permanently locking a fresh install out of its own initial configuration.
+const NOT_CONFIGURED_MESSAGE = 'ยังไม่ได้ตั้งค่าการเชื่อมต่อ'
 
 function LoginGate({ onPass }: { onPass: () => void }) {
   const navigate = useNavigate()
   const [user, setUser] = useState('')
   const [pass, setPass] = useState('')
-  const [error, setError] = useState(false)
+  const [error, setError] = useState('')
   const [showPass, setShowPass] = useState(false)
   const [editable, setEditable] = useState(false)
+  const [checking, setChecking] = useState(false)
+  const [blocked, setBlocked] = useState(false)
 
   useEffect(() => {
     const t = setTimeout(() => setEditable(true), 100)
     return () => clearTimeout(t)
   }, [])
 
-  const handleLogin = () => {
-    if (user === 'admin' && pass === 'adminqueue') {
-      onPass()
-    } else {
-      setError(true)
-      setPass('')
-      setTimeout(() => setError(false), 3000)
+  // Real officer login (same officer table as the main app), followed by a check that the
+  // officer's group has HOSxP task id 77 — replaces the old hard-coded admin/adminqueue check.
+  const handleLogin = async () => {
+    if (!user || !pass || checking) return
+    setChecking(true)
+    setError('')
+    try {
+      const res = await login(user, pass)
+      if (!res.success) {
+        if (res.message === NOT_CONFIGURED_MESSAGE) { onPass(); return }
+        setError(res.message || 'ชื่อผู้ใช้หรือรหัสผ่านไม่ถูกต้อง')
+        setPass('')
+        return
+      }
+      const access = await checkTaskAccess(user, ADMIN_TASK_ID)
+      if (access.success && access.hasAccess) {
+        onPass()
+      } else {
+        setBlocked(true)
+      }
+    } catch {
+      setError('เกิดข้อผิดพลาดในการเชื่อมต่อ')
+    } finally {
+      setChecking(false)
     }
   }
 
@@ -60,7 +92,7 @@ function LoginGate({ onPass }: { onPass: () => void }) {
                 type="text"
                 placeholder="Username"
                 value={user}
-                onChange={e => { setUser(e.target.value); setError(false) }}
+                onChange={e => { setUser(e.target.value); setError('') }}
                 onKeyDown={e => e.key === 'Enter' && handleLogin()}
                 autoComplete="new-password"
                 readOnly={!editable}
@@ -75,7 +107,7 @@ function LoginGate({ onPass }: { onPass: () => void }) {
                   type={showPass ? 'text' : 'password'}
                   placeholder="Password"
                   value={pass}
-                  onChange={e => { setPass(e.target.value); setError(false) }}
+                  onChange={e => { setPass(e.target.value); setError('') }}
                   onKeyDown={e => e.key === 'Enter' && handleLogin()}
                   style={{ paddingRight: 40 }}
                   autoComplete="new-password"
@@ -94,15 +126,28 @@ function LoginGate({ onPass }: { onPass: () => void }) {
           </div>
 
           {error && (
-            <div className="alert alert-error animate-fade">✗ ชื่อผู้ใช้หรือรหัสผ่านไม่ถูกต้อง</div>
+            <div className="alert alert-error animate-fade">✗ {error}</div>
           )}
 
           <div className="settings-actions" style={{ marginTop: 20 }}>
             <button className="btn btn-ghost" onClick={() => navigate(-1)}>ยกเลิก</button>
-            <button className="btn btn-primary" onClick={handleLogin} style={{ flex: 1 }}>🔓 เข้าสู่ระบบ</button>
+            <button className="btn btn-primary" onClick={handleLogin} disabled={checking} style={{ flex: 1 }}>
+              {checking ? <><span className="spinner" /> กำลังตรวจสอบสิทธิ์...</> : <>🔓 เข้าสู่ระบบ</>}
+            </button>
           </div>
         </div>
       </div>
+
+      {blocked && (
+        <div className="access-denied-overlay" onClick={() => setBlocked(false)}>
+          <div className="access-denied-box" onClick={e => e.stopPropagation()}>
+            <div style={{ fontSize: 44 }}>⛔</div>
+            <h3>ไม่มีสิทธิ์เข้าถึง</h3>
+            <p>บัญชีนี้ไม่มีสิทธิ์ตั้งค่าการเชื่อมต่อระบบ กรุณาติดต่อ Admin ผู้ดูแลระบบ</p>
+            <button className="btn btn-danger" onClick={() => setBlocked(false)}>ปิด</button>
+          </div>
+        </div>
+      )}
     </div>
   )
 }
@@ -164,9 +209,22 @@ export default function ConnectionSettingsPage() {
     if (res.exists) setTableExists(true)
   }
 
+  // Token = hospital code + 10 random digits, per-hospital so a token copied from one site's
+  // Postman collection is useless against another site's server.
+  const handleGenerateToken = () => {
+    const digits = Array.from({ length: 10 }, () => Math.floor(Math.random() * 10)).join('')
+    setField('apiToken', `${(form.hospitalCode || '').trim()}${digits}`)
+  }
+
+  // requireApiToken on the server starts enforcing the token the moment it's saved — this tab's
+  // own next /api/* call would otherwise still be sending the OLD (or no) token from page load
+  // and get rejected. Updating window.__API_TOKEN__ here keeps this tab working without a reload.
+  const syncTokenToThisTab = () => { window.__API_TOKEN__ = form.apiToken || '' }
+
   const handleSave = async () => {
     setSaving(true)
     await saveSettings(form)
+    syncTokenToThisTab()
     setSaving(false)
     setSaved(true)
     setTimeout(() => setSaved(false), 3000)
@@ -175,6 +233,7 @@ export default function ConnectionSettingsPage() {
   const handleSaveAndLogin = async () => {
     setSaving(true)
     await saveSettings(form)
+    syncTokenToThisTab()
     setSaving(false)
     navigate('/login')
   }
@@ -290,12 +349,37 @@ export default function ConnectionSettingsPage() {
           </div>
         </div>
 
+        <div className="settings-card card animate-scale">
+          <div className="section-label">API Token — ป้องกันการเรียก API ตรงจากภายนอก</div>
+          <div className="settings-grid">
+            <div className="form-group full">
+              <label className="form-label">รหัสสถานพยาบาล</label>
+              <input className="input" type="text" placeholder="เช่น 11163"
+                value={form.hospitalCode || ''} onChange={e => setField('hospitalCode', e.target.value)} />
+            </div>
+          </div>
+          <div className="form-group full">
+            <label className="form-label">Token ({(form.hospitalCode || '').trim() || 'รหัสสถานพยาบาล'} + รหัสสุ่ม 10 หลัก)</label>
+            <div className="token-row">
+              <input className="input" type="text" placeholder="ยังไม่ได้สร้าง — กดปุ่ม 'สร้าง Token'"
+                value={form.apiToken || ''} onChange={e => setField('apiToken', e.target.value)} readOnly />
+              <button className="btn btn-accent" onClick={handleGenerateToken} disabled={!form.hospitalCode?.trim()}>
+                🔑 สร้าง Token
+              </button>
+            </div>
+          </div>
+          <div className="alert alert-info">
+            ℹ️ เมื่อบันทึก Token แล้ว ทุกคำขอไปยัง API ของระบบต้องแนบ Token นี้ (header <code>X-API-Token</code> หรือ query <code>?token=</code>) มิฉะนั้นจะถูกปฏิเสธ — หน้าจอที่ใช้งานผ่านแอปนี้ตามปกติจะแนบให้อัตโนมัติ ไม่ต้องทำอะไรเพิ่ม ส่วนใครที่ copy URL ไปยิงตรงผ่าน Postman/curl จะต้องใส่ Token เองก่อนจึงจะได้รับข้อมูล
+          </div>
+        </div>
+
         <div className="settings-info card">
           <p className="info-title">📋 หมายเหตุการเชื่อมต่อ</p>
           <ul className="info-list">
             <li>ข้อมูลการเชื่อมต่อจะถูกเก็บไว้ในไฟล์ <code>data/db-settings.json</code></li>
             <li>การ login จะใช้ตาราง <code>officer</code> ในฐานข้อมูลที่เชื่อมต่อ</li>
             <li>รหัสผ่านใน officer_login_password_md5 ต้องเป็น MD5 hash</li>
+            <li>เข้าหน้านี้ได้เฉพาะบัญชีที่มีสิทธิ์ officer_task_id = {ADMIN_TASK_ID} เท่านั้น</li>
           </ul>
         </div>
       </div>

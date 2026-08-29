@@ -107,7 +107,10 @@ export default function NavBar() {
   const downloadShortcut = (name: string, path: string) => {
     const url = serverOrigin + path
     const a = document.createElement('a')
-    a.href = `/api/shortcut/download?name=${encodeURIComponent(name)}&url=${encodeURIComponent(url)}`
+    // Anchor-click downloads bypass fetch() entirely, so the window.fetch token patch in
+    // src/lib/api.ts never sees this request — the token has to be appended here directly.
+    const token = window.__API_TOKEN__ ? `&token=${encodeURIComponent(window.__API_TOKEN__)}` : ''
+    a.href = `/api/shortcut/download?name=${encodeURIComponent(name)}&url=${encodeURIComponent(url)}${token}`
     a.click()
   }
 

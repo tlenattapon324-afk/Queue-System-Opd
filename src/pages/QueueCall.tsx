@@ -18,7 +18,7 @@ function getPrefsKey() {
 function loadSavedPrefs() {
   try {
     return JSON.parse(localStorage.getItem(getPrefsKey()) || 'null') as
-      { servicePointId?: string; filterDepts?: string[]; selectedDisplayId?: string; visitFilter?: 'all' | 'appt' | 'walkin'; selectedDoctors?: string[] } | null
+      { servicePointId?: string; filterDepts?: string[]; selectedDisplayId?: string; visitFilter?: 'all' | 'appt' | 'walkin'; selectedDoctors?: string[]; selectedClinics?: string[] } | null
   } catch { return null }
 }
 
@@ -64,6 +64,11 @@ export default function QueueCallPage() {
   const [doctorSearch, setDoctorSearch] = useState('')
   const doctorMenuRef = useRef<HTMLDivElement>(null)
   const doctorSearchRef = useRef<HTMLInputElement>(null)
+  const [selectedClinics, setSelectedClinics] = useState<string[]>(() => loadSavedPrefs()?.selectedClinics || [])
+  const [showClinicMenu, setShowClinicMenu] = useState(false)
+  const [clinicSearch, setClinicSearch] = useState('')
+  const clinicMenuRef = useRef<HTMLDivElement>(null)
+  const clinicSearchRef = useRef<HTMLInputElement>(null)
   const [filterStatus, setFilterStatus] = useState<'all' | 'waiting' | 'calling' | 'done' | 'skip'>('all')
   const [currentCalled, setCurrentCalled] = useState<{ queueNo: string; servicePoint: string; calledAt?: string } | null>(null)
   const [callTimeMap, setCallTimeMap] = useState<Record<string, string>>({})
@@ -87,6 +92,7 @@ export default function QueueCallPage() {
 
   const [labXrayMap, setLabXrayMap] = useState<Record<string, LabXrayStatus>>({})
   const lastCalledVnRef = useRef<string | null>(null)
+  const currentSpNameRef = useRef<string>('')
   const prewarmCtxRef = useRef<{ spName: string; displayId: string }>({ spName: '', displayId: '' })
   const isLoadingQueues = useRef(false)
   const settingsRef = useRef<HTMLDivElement>(null)
@@ -100,6 +106,7 @@ export default function QueueCallPage() {
 
   const currentSp = servicePoints.find(sp => sp.id === servicePointId)
   const currentSpName = useDisplayChannels ? activeChannelName : (currentSp?.name || '')
+  currentSpNameRef.current = currentSpName
 
   useEffect(() => {
     const t = setInterval(() => setClock(new Date()), 1000)
@@ -120,7 +127,7 @@ export default function QueueCallPage() {
   }, [])
 
   const savePrefs = () => {
-    localStorage.setItem(getPrefsKey(), JSON.stringify({ servicePointId, filterDepts, selectedDisplayId, visitFilter, selectedDoctors }))
+    localStorage.setItem(getPrefsKey(), JSON.stringify({ servicePointId, filterDepts, selectedDisplayId, visitFilter, selectedDoctors, selectedClinics }))
     setSavedPrefsMsg(true)
     setTimeout(() => setSavedPrefsMsg(false), 2500)
   }
@@ -167,7 +174,8 @@ export default function QueueCallPage() {
         setCallTimeMap(prev => ({ ...prev, ...map }))
         setCurrentCalled(prev => {
           if (prev) return prev
-          const callingRows = rows.filter(r => r.status === 'calling')
+          // จำกัดเฉพาะแถวที่กำลังเรียกโดยช่องบริการของเครื่องนี้ ไม่เอาของช่องอื่นมาแสดง
+          const callingRows = rows.filter(r => r.status === 'calling' && r.service_point === currentSpNameRef.current)
           if (callingRows.length === 0) return null
           // A VN can have multiple opd_qs_slot rows (Queue_Prefix) each with their own call
           // entry — match by queue_slot too when the row has one, not vn alone.
@@ -228,18 +236,22 @@ export default function QueueCallPage() {
 
   useEffect(() => {
     const off = onQueueCalled((data) => {
-      setCurrentCalled(data)
-      // sync lastCalledVnRef เมื่อเรียกจาก Mini หรือแหล่งอื่น
-      setQueues(prev => {
-        const row = prev.find(q => String(q.queue_slot || q.queue_no || '') === String(data.queueNo))
-        if (row) lastCalledVnRef.current = row.vn
-        return prev
-      })
+      // อัปเดตกล่อง "กำลังให้บริการ" เฉพาะเมื่อเป็นคิวที่เรียกจากช่องบริการของเครื่องนี้เท่านั้น
+      // ป้องกันไม่ให้ช่องอื่นเรียกคิวพร้อมกันแล้วมาทับค่าที่แสดงอยู่
+      if (data.servicePoint === currentSpName) {
+        setCurrentCalled(data)
+        // sync lastCalledVnRef เมื่อเรียกจาก Mini หรือแหล่งอื่น
+        setQueues(prev => {
+          const row = prev.find(q => String(q.queue_slot || q.queue_no || '') === String(data.queueNo))
+          if (row) lastCalledVnRef.current = row.vn
+          return prev
+        })
+      }
       isLoadingQueues.current = false
       loadQueues()
     })
     return off
-  }, [loadQueues])
+  }, [loadQueues, currentSpName])
 
 
   // Keep prewarmCtxRef current + trigger prewarm whenever SP/display/queues change
@@ -282,6 +294,10 @@ export default function QueueCallPage() {
     try { localStorage.setItem('qc_selected_doctors', JSON.stringify(selectedDoctors)) } catch {}
   }, [selectedDoctors])
 
+  useEffect(() => {
+    try { localStorage.setItem('qc_selected_clinics', JSON.stringify(selectedClinics)) } catch {}
+  }, [selectedClinics])
+
   // Auto-focus quick-call input and redirect barcode scanner input here
   useEffect(() => {
     quickCallRef.current?.focus()
@@ -323,6 +339,20 @@ export default function QueueCallPage() {
     }
     return () => document.removeEventListener('mousedown', handler)
   }, [showDoctorMenu])
+
+  useEffect(() => {
+    const handler = (e: MouseEvent) => {
+      if (clinicMenuRef.current && !clinicMenuRef.current.contains(e.target as Node))
+        setShowClinicMenu(false)
+    }
+    if (showClinicMenu) {
+      document.addEventListener('mousedown', handler)
+      setTimeout(() => clinicSearchRef.current?.focus(), 60)
+    } else {
+      setClinicSearch('')
+    }
+    return () => document.removeEventListener('mousedown', handler)
+  }, [showClinicMenu])
 
   useEffect(() => {
     const handler = (e: MouseEvent) => {
@@ -629,13 +659,32 @@ export default function QueueCallPage() {
     (filterDepts.length === 0 || filterDepts.includes(roomKeyOf(q)))
   ).length
 
+  // Clinic list scoped the same way as the doctor filter — clinic_name comes straight back on
+  // every queue row (server-side oapp→clinic join) regardless of mode, so unlike doctorList this
+  // never needs a separate API fallback for non-slot modes.
+  const clinicsInScope = Array.from(new Set(
+    activeQueues
+      .filter(q => q.visit_type === 'appt' && (filterDepts.length === 0 || filterDepts.includes(roomKeyOf(q))))
+      .map(q => q.clinic_name)
+      .filter((name): name is string => !!name)
+  )).sort()
+
+  const toggleClinic = (name: string) =>
+    setSelectedClinics(prev => prev.includes(name) ? prev.filter(c => c !== name) : [...prev, name])
+
+  const clinicPatientCount = (name: string) => activeQueues.filter(q =>
+    q.visit_type === 'appt' && q.clinic_name === name &&
+    (filterDepts.length === 0 || filterDepts.includes(roomKeyOf(q)))
+  ).length
+
   const filteredQueues = (filterStatus === 'done' || filterStatus === 'skip' ? queues : activeQueues)
     .filter(q => {
       const matchDept = filterDepts.length === 0 || filterDepts.includes(roomKeyOf(q))
       const matchStatus = filterStatus === 'all' ? true : q.status === filterStatus
       const matchVisit = visitFilter === 'all' || q.visit_type === visitFilter
       const matchDoctor = visitFilter !== 'appt' || selectedDoctors.length === 0 || (!!q.doctor_name && selectedDoctors.includes(q.doctor_name))
-      return matchDept && matchStatus && matchVisit && matchDoctor
+      const matchClinic = visitFilter !== 'appt' || selectedClinics.length === 0 || (!!q.clinic_name && selectedClinics.includes(q.clinic_name))
+      return matchDept && matchStatus && matchVisit && matchDoctor && matchClinic
     })
     .sort((a, b) => {
       // Queue_OPD / Queue_OPD_Room: sort oqueue (queue_no) numerically ascending
@@ -669,7 +718,8 @@ export default function QueueCallPage() {
     const matchDept = filterDepts.length === 0 || filterDepts.includes(roomKeyOf(q))
     const matchVisit = visitFilter === 'all' || q.visit_type === visitFilter
     const matchDoctor = visitFilter !== 'appt' || selectedDoctors.length === 0 || (!!q.doctor_name && selectedDoctors.includes(q.doctor_name))
-    return matchDept && matchVisit && matchDoctor
+    const matchClinic = visitFilter !== 'appt' || selectedClinics.length === 0 || (!!q.clinic_name && selectedClinics.includes(q.clinic_name))
+    return matchDept && matchVisit && matchDoctor && matchClinic
   })
   const countByStatus = (s: string) => deptFilteredQueues.filter(q => q.status === s).length
 
@@ -685,7 +735,8 @@ export default function QueueCallPage() {
     q.status === 'waiting' &&
     (filterDepts.length === 0 || filterDepts.includes(roomKeyOf(q))) &&
     (visitFilter === 'all' || q.visit_type === visitFilter) &&
-    (visitFilter !== 'appt' || selectedDoctors.length === 0 || (!!q.doctor_name && selectedDoctors.includes(q.doctor_name)))
+    (visitFilter !== 'appt' || selectedDoctors.length === 0 || (!!q.doctor_name && selectedDoctors.includes(q.doctor_name))) &&
+    (visitFilter !== 'appt' || selectedClinics.length === 0 || (!!q.clinic_name && selectedClinics.includes(q.clinic_name)))
   )
 
   return (
@@ -1222,6 +1273,76 @@ export default function QueueCallPage() {
                 </div>
               )}
             </div>
+
+            <div className={`qc-clinic-dropdown${visitFilter === 'appt' ? '' : ' disabled'}`} ref={clinicMenuRef}>
+              <button className={`qc-dept-trigger ${showClinicMenu ? 'open' : ''}`}
+                disabled={visitFilter !== 'appt'}
+                onClick={() => setShowClinicMenu(v => !v)}>
+                <span className="qc-dept-trigger-text">
+                  {selectedClinics.length === 0
+                    ? 'คลินิกทั้งหมด'
+                    : selectedClinics.length === 1
+                      ? selectedClinics[0]
+                      : `เลือก ${selectedClinics.length} คลินิก`}
+                </span>
+                <svg width="12" height="12" viewBox="0 0 24 24" fill="none" className="qc-dept-caret">
+                  <path d="M6 9l6 6 6-6" stroke="currentColor" strokeWidth="2" strokeLinecap="round" strokeLinejoin="round" />
+                </svg>
+              </button>
+
+              {showClinicMenu && (
+                <div className="qc-dept-menu">
+                  <div className="qc-dept-search-wrap">
+                    <svg width="13" height="13" viewBox="0 0 24 24" fill="none" className="qc-dept-search-icon">
+                      <circle cx="11" cy="11" r="8" stroke="currentColor" strokeWidth="2"/>
+                      <path d="M21 21l-4.35-4.35" stroke="currentColor" strokeWidth="2" strokeLinecap="round"/>
+                    </svg>
+                    <input
+                      ref={clinicSearchRef}
+                      className="qc-dept-search-input"
+                      type="text"
+                      placeholder="ค้นหาคลินิก..."
+                      value={clinicSearch}
+                      onChange={e => setClinicSearch(e.target.value)}
+                      onKeyDown={e => e.stopPropagation()}
+                    />
+                    {clinicSearch && (
+                      <button className="qc-dept-search-clear" onClick={() => { setClinicSearch(''); clinicSearchRef.current?.focus() }}>✕</button>
+                    )}
+                  </div>
+                  <div className="qc-dept-list-scroll">
+                    {!clinicSearch && (
+                      <>
+                        <label className="qc-dept-item all-item">
+                          <input type="checkbox" checked={selectedClinics.length === 0} onChange={() => setSelectedClinics([])} />
+                          <span>คลินิกทั้งหมด</span>
+                          <span className="qc-dept-item-cnt">
+                            {activeQueues.filter(q => q.visit_type === 'appt' && (filterDepts.length === 0 || filterDepts.includes(roomKeyOf(q)))).length}
+                          </span>
+                        </label>
+                        <div className="qc-dept-divider" />
+                      </>
+                    )}
+                    {clinicsInScope.length === 0 ? (
+                      <div className="qc-dept-no-result">ไม่พบคลินิกที่มีนัดหมายวันนี้</div>
+                    ) : clinicsInScope
+                      .filter(name => !clinicSearch || name.toLowerCase().includes(clinicSearch.toLowerCase()))
+                      .map(name => (
+                        <label key={name} className="qc-dept-item">
+                          <input
+                            type="checkbox"
+                            checked={selectedClinics.length === 0 || selectedClinics.includes(name)}
+                            onChange={() => toggleClinic(name)}
+                          />
+                          <span>{name}</span>
+                          <span className="qc-dept-item-cnt">{clinicPatientCount(name)}</span>
+                        </label>
+                      ))
+                    }
+                  </div>
+                </div>
+              )}
+            </div>
             </div>
             <div className="qc-filter-tabs">
               {(['all', 'waiting', 'calling', 'done', 'skip'] as const).map(s => (
@@ -1355,7 +1476,12 @@ export default function QueueCallPage() {
                         )}
                       </td>
                       <td className="qc-td-ins">{q.insurance || '—'}</td>
-                      <td className="qc-td-dep">{q.department || '—'}</td>
+                      <td className="qc-td-dep">
+                        {q.department || '—'}
+                        {q.clinic_name && (
+                          <div className="qc-clinic-name"><span className="qc-clinic-label">คลินิก : </span>{q.clinic_name}</div>
+                        )}
+                      </td>
                       <td className="qc-td-center">
                         <span className={`qc-visit-badge ${q.ist_name?.includes('นัด') ? 'vb-appt' : 'vb-walk'}`}>
                           {q.ist_name || '—'}

@@ -4,6 +4,23 @@ const isElectron = () => typeof window !== 'undefined' && !!window.electronAPI
 
 const BASE = '/api'
 
+// Patches window.fetch (once) so every request to /api/* — whether through fetchJSON below or a
+// raw fetch() call scattered elsewhere in the app — automatically carries the API token the
+// server injected into this page on load (window.__API_TOKEN__). This is what lets the browser
+// UI keep working transparently once a token is configured, while a request replayed elsewhere
+// (Postman, curl) without that token gets rejected by requireApiToken on the server.
+if (typeof window !== 'undefined' && !(window as any).__fetchPatchedForApiToken__) {
+  ;(window as any).__fetchPatchedForApiToken__ = true
+  const originalFetch = window.fetch.bind(window)
+  window.fetch = (input: RequestInfo | URL, init?: RequestInit) => {
+    const url = typeof input === 'string' ? input : input instanceof URL ? input.toString() : (input as Request).url
+    if (url.includes('/api/') && window.__API_TOKEN__) {
+      init = { ...init, headers: { ...(init?.headers || {}), 'X-API-Token': window.__API_TOKEN__ } }
+    }
+    return originalFetch(input, init)
+  }
+}
+
 async function fetchJSON<T>(path: string, options?: RequestInit): Promise<T> {
   const res = await fetch(BASE + path, {
     headers: { 'Content-Type': 'application/json' },
@@ -116,6 +133,17 @@ export async function login(
 ): Promise<{ success: boolean; message?: string; username?: string }> {
   if (isElectron()) return window.electronAPI.login(u, p)
   return fetchJSON('/auth/login', { method: 'POST', body: JSON.stringify({ username: u, password: p }) })
+}
+
+// Checks whether the given officer's group has access to a specific HOSxP task id, via
+// officer_group_task_access → officer_group → officer_group_list. Used to gate the connection
+// settings screen to officer_task_id '77' (system-administrator access) instead of a hard-coded
+// password.
+export async function checkTaskAccess(
+  username: string, taskId: string
+): Promise<{ success: boolean; hasAccess: boolean; message?: string }> {
+  if (isElectron()) return { success: true, hasAccess: false }
+  return fetchJSON('/auth/task-access', { method: 'POST', body: JSON.stringify({ username, taskId }) })
 }
 
 // ─── Queue ────────────────────────────────────────────────────────────────────

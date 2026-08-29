@@ -20,6 +20,10 @@ contextBridge.exposeInMainWorld('electronAPI', {
     return () => ipcRenderer.removeAllListeners('queue:called')
   },
 
+  // Mini window — shrink to a small floating icon / restore to the full calling panel
+  minimizeMiniWindow: () => ipcRenderer.invoke('mini:minimize'),
+  restoreMiniWindow: () => ipcRenderer.invoke('mini:restore'),
+
   // Display window
   openDisplay: (config: unknown) => ipcRenderer.invoke('display:open', config),
   updateDisplayConfig: (config: unknown) => ipcRenderer.invoke('display:updateConfig', config),

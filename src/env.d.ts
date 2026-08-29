@@ -7,6 +7,8 @@ interface DbSettings {
   database: string
   username: string
   password: string
+  hospitalCode?: string
+  apiToken?: string
 }
 
 interface QueueItem {
@@ -21,6 +23,7 @@ interface QueueItem {
   slot_doctor_name?: string | null
   visit_type: string
   doctor_name?: string | null
+  clinic_name?: string | null
   ist_name?: string | null
   ost_name?: string | null
   vstdate: string
@@ -60,7 +63,16 @@ interface DisplayConfigItem extends DisplayConfig {
   filterDepts?: string[]
 }
 
+// Document Picture-in-Picture API — not yet in lib.dom.d.ts. Chromium 116+ (Chrome/Edge) only.
+interface DocumentPictureInPicture {
+  requestWindow: (options?: { width?: number; height?: number }) => Promise<Window>
+  readonly window: Window | null
+}
+
 interface Window {
+  documentPictureInPicture?: DocumentPictureInPicture
+  // Injected server-side into the served index.html — see requireApiToken in server/index.js.
+  __API_TOKEN__?: string
   electronAPI: {
     loadSettings: () => Promise<DbSettings | null>
     saveSettings: (s: DbSettings) => Promise<{ success: boolean }>
@@ -70,6 +82,8 @@ interface Window {
     callQueue: (identifier: string, servicePoint: string) => Promise<{ success: boolean; message?: string; queueNo?: string; queueSlot?: number }>
     updateQueueStatus: (vn: string, status: string) => Promise<{ success: boolean }>
     onQueueCalled: (cb: (d: { queueNo: string; servicePoint: string }) => void) => () => void
+    minimizeMiniWindow: () => Promise<void>
+    restoreMiniWindow: () => Promise<void>
     openDisplay: (config: DisplayConfig) => Promise<void>
     updateDisplayConfig: (config: DisplayConfig) => Promise<void>
     onDisplayConfig: (cb: (config: unknown) => void) => () => void
