@@ -3,7 +3,8 @@ import { useNavigate } from 'react-router-dom'
 import {
   getQueueList, callQueue, onQueueCalled, updateQueueStatus,
   getServicePoints, getDisplayConfigs, getDisplayQDConfig, clearDisplayQueues, getCallsToday, prewarmTTS, getLabXray, getAppointmentDoctors, type LabXrayStatus,
-  getQueueStaging, moveQueuesToStaging, type QueueStagingMap
+  getQueueStaging, moveQueuesToStaging, type QueueStagingMap,
+  getPriorityList, getPrioritySettings, savePrioritySettings, type PriorityItem
 } from '../lib/api'
 import './QueueCall.css'
 
@@ -21,6 +22,16 @@ function loadSavedPrefs() {
     return JSON.parse(localStorage.getItem(getPrefsKey()) || 'null') as
       { servicePointId?: string; filterDepts?: string[]; selectedDisplayId?: string; visitFilter?: 'all' | 'appt' | 'walkin'; selectedDoctors?: string[]; selectedClinics?: string[]; tableZoom?: number } | null
   } catch { return null }
+}
+
+// เลือกสีตัวอักษร (ดำ/ขาว) ให้อ่านง่ายที่สุดบนพื้นหลังสีที่แอดมินเลือกเอง (YIQ contrast)
+function getContrastTextColor(hex: string): string {
+  const h = hex.replace('#', '')
+  const r = parseInt(h.substring(0, 2), 16) || 0
+  const g = parseInt(h.substring(2, 4), 16) || 0
+  const b = parseInt(h.substring(4, 6), 16) || 0
+  const yiq = (r * 299 + g * 587 + b * 114) / 1000
+  return yiq >= 150 ? '#1A1A1A' : '#FFFFFF'
 }
 
 export default function QueueCallPage() {
@@ -83,7 +94,6 @@ export default function QueueCallPage() {
   const [qdFilterDepts, setQdFilterDepts] = useState<string[]>([])
   const callNextBtnRef = useRef<HTMLButtonElement>(null)
   const [manualTab, setManualTab] = useState<'search' | 'scan'>('search')
-  const [confirmEnabled, setConfirmEnabled] = useState(() => localStorage.getItem('qc_confirm') === 'true')
   const [repeatAnnounce, setRepeatAnnounce] = useState(() => localStorage.getItem('qc_repeat_announce') === 'true')
   // แสดง/ซ่อนกลุ่มปุ่มเลือกโหมดเรียกคิว — default เปิดทั้งคู่ไว้ตามพฤติกรรมเดิม
   const [showPrefixGroup, setShowPrefixGroup] = useState(() => localStorage.getItem('qc_show_prefix_group') !== 'false')
@@ -105,7 +115,6 @@ export default function QueueCallPage() {
     localStorage.setItem('qc_visible_columns', JSON.stringify(next))
     return next
   })
-  const [pendingCall, setPendingCall] = useState<QueueRow | null>(null)
   const [showDisplayMenu, setShowDisplayMenu] = useState(false)
   const [showChannelMenu, setShowChannelMenu] = useState(false)
   const [channelSearch, setChannelSearch] = useState('')
@@ -117,6 +126,19 @@ export default function QueueCallPage() {
   // picked from the main table are parked in a column ahead of time. Purely organisational:
   // calling still happens from the main table, so this never changes what the main page does.
   const [showBoard, setShowBoard] = useState(() => localStorage.getItem('qc_show_board') === 'true')
+  // เปิด/ปิดฟีเจอร์บอร์ดเตรียมคิวทั้งหมด — ปิดแล้วซ่อนทั้งปุ่มและแผงบอร์ด (ค่าเริ่มต้นเปิดไว้)
+  const [boardFeatureEnabled, setBoardFeatureEnabled] = useState(() => localStorage.getItem('qc_board_feature_enabled') !== 'false')
+
+  // อนุญาตให้เรียกคิวข้ามห้องตรวจที่กรองไว้ ผ่านช่อง "เรียกด้วย Q / HN" — ปิดไว้เป็นค่าเริ่มต้นตาม
+  // พฤติกรรมเดิม (ต้องเข้าเมนูตั้งค่าเพื่อเปิดใช้) ใช้ได้ทุก mode เพราะเช็คจาก filterDepts ตรงๆ
+  const [allowCrossDeptCall, setAllowCrossDeptCall] = useState(() => localStorage.getItem('qc_allow_cross_dept_call') === 'true')
+
+  // แถบสีความเร่งด่วน (จากการคัดกรอง ovst.pt_priority join pt_priority) — ตั้งค่าเก็บไว้ที่ server
+  // เพื่อให้ทุกเครื่อง/ทุก browser เห็นสีเดียวกัน (เหมือน service points / display configs)
+  const [priorityEnabled, setPriorityEnabled] = useState(false)
+  const [priorityColors, setPriorityColors] = useState<Record<string, string>>({})
+  const [priorityList, setPriorityList] = useState<PriorityItem[]>([])
+  const [showPriorityModal, setShowPriorityModal] = useState(false)
   const [staging, setStaging] = useState<QueueStagingMap>({})
   const [selectedKeys, setSelectedKeys] = useState<string[]>([])
   const [boardFilter, setBoardFilter] = useState('')
@@ -174,6 +196,10 @@ export default function QueueCallPage() {
 
   useEffect(() => { loadSP() }, [loadSP])
   useEffect(() => { getDisplayConfigs().then(setDisplayConfigs) }, [])
+  useEffect(() => {
+    getPrioritySettings().then(s => { setPriorityEnabled(s.enabled); setPriorityColors(s.colors) })
+    getPriorityList().then(setPriorityList)
+  }, [])
 
   useEffect(() => {
     try { localStorage.setItem('qc_show_board', String(showBoard)) } catch {}
@@ -473,7 +499,6 @@ export default function QueueCallPage() {
   // ── Queue handlers ──────────────────────────────────────────────────────────
 
   const handleCall = async (queue: QueueRow) => {
-    if (confirmEnabled) { setPendingCall(queue); return }
     await doCall(queue)
   }
 
@@ -537,13 +562,6 @@ export default function QueueCallPage() {
     }
   }
 
-  const handleConfirm = async () => {
-    if (!pendingCall) return
-    const q = pendingCall
-    setPendingCall(null)
-    await doCall(q)
-  }
-
   const handleCallNext = async () => {
     // If a row is locked (selected) and it's waiting → call that specific queue
     if (lockedVn) {
@@ -562,20 +580,30 @@ export default function QueueCallPage() {
   }
 
   const handleRecall = async () => {
-    if (!currentCalled) return
+    // กล่อง "กำลังให้บริการ" (currentCalled) จะว่างหลังรีเฟรชหน้า ถ้าคิวที่กำลังเรียกอยู่ถูกเรียก
+    // เข้าช่องบริการอื่นที่ไม่ตรงกับ currentSpName ที่เลือกไว้ตอนนี้ — ใช้เป้าหมายเดียวกับปุ่ม
+    // "ยืนยันการเรียกคิว" เป็นทางเลือกสำรอง แต่ต้องเป็นแถวที่ "กำลังเรียก" จริงเท่านั้น — getConfirmTarget
+    // ตอนนี้ยอมรับแถวที่แค่คลิกเลือกไว้ (ยังไม่เรียก) ด้วย ซึ่งไม่ใช่ความหมายของ "เรียกซ้ำ"
+    const fallbackTarget = !currentCalled ? (() => {
+      const t = getConfirmTarget()
+      return t && t.status === 'calling' ? t : null
+    })() : null
+    if (!currentCalled && !fallbackTarget) return
     // ค้นหา VN จาก queues ที่ตรงกับ queueNo ใน box 1 (กำลังให้บริการ)
     // ป้องกัน lastCalledVnRef ที่อาจเป็น VN เก่าจากคิวก่อนหน้า
-    const callingRow = queues.find(q =>
-      String(q.queue_slot || q.queue_no || '') === String(currentCalled.queueNo)
-    )
-    const identifier = (callingRow ? (callingRow.queue_slot || callingRow.vn) : null) ?? lastCalledVnRef.current ?? String(currentCalled.queueNo)
+    const callingRow = currentCalled
+      ? queues.find(q => String(q.queue_slot || q.queue_no || '') === String(currentCalled.queueNo))
+      : fallbackTarget
+    const sp = callingRow?.service_point || currentCalled?.servicePoint || currentSpName
+    const identifier = (callingRow ? (callingRow.queue_slot || callingRow.vn) : null)
+      ?? lastCalledVnRef.current ?? String(currentCalled?.queueNo ?? '')
     setCallingId('__recall__')
     try {
-      const res = await callQueue(identifier, currentSpName, mode, selectedDisplayId || undefined, repeatAnnounce)
+      const res = await callQueue(identifier, sp, mode, selectedDisplayId || undefined, repeatAnnounce)
       if (res.success) {
-        const calledNo = res.queueNo ?? String(currentCalled.queueNo)
+        const calledNo = res.queueNo ?? String(callingRow?.queue_slot || callingRow?.queue_no || currentCalled?.queueNo || '')
         const calledAt = new Date().toLocaleTimeString('th-TH', { hour: '2-digit', minute: '2-digit' })
-        setCurrentCalled({ queueNo: calledNo, servicePoint: currentSpName, calledAt })
+        setCurrentCalled({ queueNo: calledNo, servicePoint: sp, calledAt })
         loadQueues()
       }
     } catch {}
@@ -612,7 +640,6 @@ export default function QueueCallPage() {
         setShowDisplayMenu(false)
         setShowChannelMenu(false)
         setShowDeptMenu(false)
-        setPendingCall(null)
         setLockedVn(null)
         return
       }
@@ -621,7 +648,7 @@ export default function QueueCallPage() {
         setShowShortcutHelp(v => !v)
         return
       }
-      if (e.key === 'F1') { e.preventDefault(); handleConfirm(); return }
+      if (e.key === 'F1') { e.preventDefault(); handleConfirmCall(); return }
       if (e.key === 'F2') { e.preventDefault(); handleCallNext(); return }
       if (e.key === 'F3') { e.preventDefault(); handleRecall(); return }
       if (e.key === 'F4') { e.preventDefault(); handleNoShow(); return }
@@ -644,7 +671,7 @@ export default function QueueCallPage() {
       // and so drops 'skip'/'done' rows) — this box is also how a no-show patient gets re-called
       // by typing their queue number or HN, regardless of which status tab happens to be open.
       let callVal = val
-      if (filterDepts.length > 0) {
+      if (filterDepts.length > 0 && !allowCrossDeptCall) {
         const match = queues.filter(q => filterDepts.includes(roomKeyOf(q))).find(q =>
           String(q.vn) === val || String(q.hn || '') === val ||
           String(q.queue_no ?? '') === val || String(q.queue_slot || '') === val
@@ -676,6 +703,31 @@ export default function QueueCallPage() {
 
   const handleStatusChange = async (queue: QueueRow, status: QueueStatus) => {
     try { await updateQueueStatus(queue.vn, status, { queueSlot: queue.queue_slot }); loadQueues() } catch {}
+  }
+
+  // เป้าหมายของปุ่ม "ยืนยันการเรียกคิว": แถวที่คลิกเลือก (lockedVn) ถ้ามี ไม่งั้นใช้คิวล่าสุดที่เรียกไป
+  // แถวที่ล็อกไว้ใช้ได้ไม่ว่าจะยังรอเรียกหรือกำลังเรียกอยู่ก็ตาม — เหมือนกับปุ่ม "เรียกไม่มา" ที่เลือก
+  // แถวเดียวกันนี้ได้เช่นกัน ให้คลิกเลือกแถวแล้วไปยืนยัน "แล้ว" หรือ "ไม่มา" ก็ได้ทั้งสองแบบ
+  const getConfirmTarget = (): QueueRow | null => {
+    if (lockedVn) {
+      const locked = queues.find(q => q.vn === lockedVn)
+      if (locked) return locked
+    }
+    const callingRows = queues.filter(q => q.status === 'calling')
+    if (callingRows.length === 0) return null
+    if (lastCalledVnRef.current) {
+      const last = callingRows.find(q => q.vn === lastCalledVnRef.current)
+      if (last) return last
+    }
+    const timeKey = (q: QueueRow) => callTimeMap[q.queue_slot ? `${q.vn}::${q.queue_slot}` : q.vn] || ''
+    return callingRows.reduce((a, b) => (timeKey(b) >= timeKey(a) ? b : a))
+  }
+
+  const handleConfirmCall = async () => {
+    const target = getConfirmTarget()
+    if (!target) return
+    await handleStatusChange(target, 'done')
+    if (lockedVn === target.vn) setLockedVn(null)
   }
 
   // ── Derived values ──────────────────────────────────────────────────────────
@@ -1095,14 +1147,16 @@ export default function QueueCallPage() {
           </button>
 
           {/* ── บอร์ดเตรียมคิว ── */}
-          <button
-            className={`qc-board-toggle${showBoard ? ' active' : ''}`}
-            disabled={!selectedDisplay || boardChannels.length === 0}
-            title={selectedDisplay ? `บอร์ดเตรียมคิวของจอ "${selectedDisplay.name}"` : 'เลือกจอแสดงคิวก่อน'}
-            onClick={() => setShowBoard(v => !v)}
-          >
-            🗂 บอร์ดเตรียมคิว{boardCount > 0 ? ` (${boardCount})` : ''}
-          </button>
+          {boardFeatureEnabled && (
+            <button
+              className={`qc-board-toggle${showBoard ? ' active' : ''}`}
+              disabled={!selectedDisplay || boardChannels.length === 0}
+              title={selectedDisplay ? `บอร์ดเตรียมคิวของจอ "${selectedDisplay.name}"` : 'เลือกจอแสดงคิวก่อน'}
+              onClick={() => setShowBoard(v => !v)}
+            >
+              🗂 บอร์ดเตรียมคิว{boardCount > 0 ? ` (${boardCount})` : ''}
+            </button>
+          )}
         </div>
 
         <div className="qc-topbar-center">
@@ -1218,6 +1272,43 @@ export default function QueueCallPage() {
                   QN ทั่วไป / QN ห้องตรวจ
                 </label>
                 <div className="qc-sd-divider" />
+                <div className="qc-sd-section-label">ฟีเจอร์เพิ่มเติม</div>
+                <label className="qc-sd-checkbox">
+                  <input type="checkbox" checked={boardFeatureEnabled}
+                    onChange={e => {
+                      setBoardFeatureEnabled(e.target.checked)
+                      localStorage.setItem('qc_board_feature_enabled', String(e.target.checked))
+                      if (!e.target.checked) setShowBoard(false)
+                    }} />
+                  แสดงปุ่มบอร์ดเตรียมคิว
+                </label>
+                <div className="qc-sd-priority-row">
+                  <label className="qc-sd-checkbox">
+                    <input type="checkbox" checked={priorityEnabled}
+                      onChange={e => {
+                        const enabled = e.target.checked
+                        setPriorityEnabled(enabled)
+                        savePrioritySettings({ enabled, colors: priorityColors })
+                        if (enabled) setShowPriorityModal(true)
+                      }} />
+                    แสดงความเร่งด่วน
+                  </label>
+                  {priorityEnabled && (
+                    <button type="button" className="qc-sd-priority-config-btn"
+                      onClick={() => setShowPriorityModal(true)}>
+                      ตั้งค่าสี
+                    </button>
+                  )}
+                </div>
+                <label className="qc-sd-checkbox">
+                  <input type="checkbox" checked={allowCrossDeptCall}
+                    onChange={e => {
+                      setAllowCrossDeptCall(e.target.checked)
+                      localStorage.setItem('qc_allow_cross_dept_call', String(e.target.checked))
+                    }} />
+                  อนุญาตเรียกคิวข้ามห้องตรวจ (ช่อง Q / HN)
+                </label>
+                <div className="qc-sd-divider" />
                 <button type="button" className="qc-sd-section-label qc-sd-section-toggle"
                   onClick={() => setShowColumnMenu(v => !v)}>
                   แสดงคอลัมน์ตาราง
@@ -1282,8 +1373,20 @@ export default function QueueCallPage() {
             <span className="qc-kbd">F2</span>
           </button>
 
+          <button className="qc-btn-action qc-btn-confirm" onClick={handleConfirmCall}
+            disabled={!getConfirmTarget() || !!callingId}>
+            {callingId ? <span className="qc-btn-spinner" /> : <span className="qc-btn-icon">✓</span>}
+            {(() => {
+              const target = getConfirmTarget()
+              return target
+                ? `ยืนยันการเรียกคิว · ${target.queue_slot ?? target.queue_no ?? '?'}`
+                : 'ยืนยันการเรียกคิว'
+            })()}
+            <span className="qc-kbd">F1</span>
+          </button>
+
           <button className="qc-btn-action qc-btn-recall" onClick={handleRecall}
-            disabled={!!callingId || !currentCalled}>
+            disabled={!!callingId || (!currentCalled && getConfirmTarget()?.status !== 'calling')}>
             <span className="qc-btn-icon">○</span>เรียกซ้ำ
             <span className="qc-kbd">F3</span>
           </button>
@@ -1299,7 +1402,12 @@ export default function QueueCallPage() {
           </button>
 
           <div className="qc-manual-card">
-            <div className="qc-manual-label">เรียกด้วย Q / HN</div>
+            <div className="qc-manual-label">
+              เรียกด้วย Q / HN
+              {allowCrossDeptCall && filterDepts.length > 0 && (
+                <span className="qc-manual-cross-dept-badge" title="เปิดใช้งานเรียกคิวข้ามห้องตรวจที่กรองไว้">เรียกข้ามห้องตรวจได้</span>
+              )}
+            </div>
             <form onSubmit={handleQuickCall} className="qc-manual-form">
               <input ref={quickCallRef} className="input qc-manual-input" type="text"
                 placeholder="พิมพ์เลขคิว (Q) หรือ HN... / ยิงบาร์โค้ด"
@@ -1347,25 +1455,6 @@ export default function QueueCallPage() {
               <input type="checkbox" checked={repeatAnnounce} onChange={e => {
                 setRepeatAnnounce(e.target.checked)
                 localStorage.setItem('qc_repeat_announce', String(e.target.checked))
-              }} />
-              <span className="qc-autocall-track">
-                <span className="qc-autocall-thumb" />
-              </span>
-            </div>
-          </label>
-
-          <label className={`qc-autocall-toggle ${confirmEnabled ? 'on' : ''}`}>
-            <div className="qc-autocall-left">
-              <svg width="15" height="15" viewBox="0 0 24 24" fill="none">
-                <circle cx="12" cy="12" r="10" stroke="currentColor" strokeWidth="2" />
-                <path d="M12 8v4M12 16h.01" stroke="currentColor" strokeWidth="2" strokeLinecap="round" />
-              </svg>
-              <span>ยืนยันก่อนเรียกคิว</span>
-            </div>
-            <div className="qc-autocall-switch">
-              <input type="checkbox" checked={confirmEnabled} onChange={e => {
-                setConfirmEnabled(e.target.checked)
-                localStorage.setItem('qc_confirm', String(e.target.checked))
               }} />
               <span className="qc-autocall-track">
                 <span className="qc-autocall-thumb" />
@@ -1696,7 +1785,7 @@ export default function QueueCallPage() {
                   {s === 'all' ? `ทั้งหมด (${deptFilteredQueues.length})` : `${statusLabel[s]} (${countByStatus(s)})`}
                 </button>
               ))}
-              {boardChannels.length > 0 && (
+              {boardFeatureEnabled && boardChannels.length > 0 && (
                 <div className="qc-board-filter">
                   <span className="qc-board-filter-label">🗂 บอร์ด</span>
                   {boardChannels.map(ch => {
@@ -1726,7 +1815,7 @@ export default function QueueCallPage() {
             </div>
           </div>
 
-          {selectedKeys.length > 0 && (
+          {boardFeatureEnabled && selectedKeys.length > 0 && (
             <div className="qc-stage-toolbar">
               <span className="qc-stage-toolbar-count">เลือก {selectedKeys.length} คิว → ใส่บอร์ด</span>
               {boardChannels.length === 0 ? (
@@ -1755,12 +1844,14 @@ export default function QueueCallPage() {
             ) : (
               <table className="qc-table">
                 <thead><tr>
-                  <th className="qc-th-select">
-                    <input type="checkbox"
-                      checked={filteredQueues.length > 0 && filteredQueues.every(q => selectedKeys.includes(queueKeyOf(q)))}
-                      onChange={e => setSelectionForRows(filteredQueues, e.target.checked)}
-                      title="เลือกทั้งหมดที่แสดงอยู่" />
-                  </th>
+                  {boardFeatureEnabled && (
+                    <th className="qc-th-select">
+                      <input type="checkbox"
+                        checked={filteredQueues.length > 0 && filteredQueues.every(q => selectedKeys.includes(queueKeyOf(q)))}
+                        onChange={e => setSelectionForRows(filteredQueues, e.target.checked)}
+                        title="เลือกทั้งหมดที่แสดงอยู่" />
+                    </th>
+                  )}
                   {visibleColumns.date && <th>วันที่</th>}
                   {visibleColumns.lab && <th className="qc-th-lab">Lab</th>}
                   {visibleColumns.xray && <th className="qc-th-lab">X-ray</th>}
@@ -1805,14 +1896,16 @@ export default function QueueCallPage() {
                           setLockedVn(prev => prev === q.vn ? null : q.vn)
                         }
                       }}>
-                      <td className="qc-td-select" onClick={e => e.stopPropagation()}>
-                        <input type="checkbox"
-                          checked={selectedKeys.includes(queueKeyOf(q))}
-                          onChange={() => toggleSelectKey(queueKeyOf(q))} />
-                        {channelByKey.has(queueKeyOf(q)) && (
-                          <span className="qc-stage-tag" title="อยู่ในบอร์ดเตรียมคิว">{channelByKey.get(queueKeyOf(q))}</span>
-                        )}
-                      </td>
+                      {boardFeatureEnabled && (
+                        <td className="qc-td-select" onClick={e => e.stopPropagation()}>
+                          <input type="checkbox"
+                            checked={selectedKeys.includes(queueKeyOf(q))}
+                            onChange={() => toggleSelectKey(queueKeyOf(q))} />
+                          {channelByKey.has(queueKeyOf(q)) && (
+                            <span className="qc-stage-tag" title="อยู่ในบอร์ดเตรียมคิว">{channelByKey.get(queueKeyOf(q))}</span>
+                          )}
+                        </td>
+                      )}
                       {visibleColumns.date && <td className="qc-td-date">
                         <div>{q.vstdate ? String(q.vstdate).substring(0, 10) : '—'}</div>
                         {q.vsttime && <div className="qc-td-time">{String(q.vsttime).substring(0, 5)}</div>}
@@ -1890,7 +1983,17 @@ export default function QueueCallPage() {
                       </td>}
                       {(mode === 'slot' || mode === 'slot_cur') && <td className="qc-td-center"><span className="qc-slot-pill">{q.queue_slot ?? '—'}</span></td>}
                       <td className="qc-td-center"><span className="qc-qno-pill">{q.queue_no || '—'}</span></td>
-                      {visibleColumns.hn && <td className="qc-td-hn"><span>{q.hn || '—'}</span></td>}
+                      {visibleColumns.hn && (() => {
+                        const pColor = priorityEnabled ? priorityColors[String(q.priority_id ?? '')] : undefined
+                        return (
+                          <td className="qc-td-hn">
+                            <span style={pColor ? { background: pColor, borderColor: pColor, color: getContrastTextColor(pColor) } : undefined}
+                              title={pColor ? q.priority_name || undefined : undefined}>
+                              {q.hn || '—'}
+                            </span>
+                          </td>
+                        )
+                      })()}
                       {visibleColumns.name && <td className="qc-td-name">
                         {q.queue_name || '—'}
                         {q.visit_type === 'appt' && q.doctor_name && (
@@ -1949,7 +2052,7 @@ export default function QueueCallPage() {
         </main>
 
         {/* ─── Staging Board ─── */}
-        {showBoard && selectedDisplay && boardChannels.length > 0 && (
+        {boardFeatureEnabled && showBoard && selectedDisplay && boardChannels.length > 0 && (
           <aside className="qc-board">
             <div className="qc-board-head">
               <span className="qc-board-title">🗂 {selectedDisplay.name}</span>
@@ -2005,37 +2108,6 @@ export default function QueueCallPage() {
         )}
       </div>
 
-      {/* ─── Confirmation Modal ─── */}
-      {pendingCall && (
-        <div className="qc-confirm-overlay" onClick={() => setPendingCall(null)}>
-          <div className="qc-confirm-modal" onClick={e => e.stopPropagation()}>
-            <div className="qc-confirm-icon">
-              <svg width="28" height="28" viewBox="0 0 24 24" fill="none">
-                <circle cx="12" cy="12" r="10" stroke="#00BCD4" strokeWidth="2" />
-                <path d="M12 8v4M12 16h.01" stroke="#00BCD4" strokeWidth="2" strokeLinecap="round" />
-              </svg>
-            </div>
-            <h3 className="qc-confirm-title">ยืนยันการเรียกคิว</h3>
-            <div className="qc-confirm-body">
-              <div className="qc-confirm-no">{pendingCall.queue_slot || pendingCall.queue_no || '—'}</div>
-              <p className="qc-confirm-name">{pendingCall.queue_name || '—'}</p>
-              <p className="qc-confirm-meta">
-                {pendingCall.department || '—'} &nbsp;·&nbsp; ช่อง <strong>{pendingCall ? (channelByKey.get(queueKeyOf(pendingCall)) || currentSpName) : currentSpName}</strong>
-              </p>
-            </div>
-            <div className="qc-confirm-actions">
-              <button className="btn btn-ghost qc-confirm-cancel" onClick={() => setPendingCall(null)}>
-                ยกเลิก <span className="qc-kbd" style={{ background: 'rgba(0,0,0,0.08)', borderColor: 'rgba(0,0,0,0.15)', color: '#546E7A' }}>Esc</span>
-              </button>
-              <button className="btn btn-primary qc-confirm-ok" onClick={handleConfirm} disabled={!!callingId}>
-                {callingId ? <span className="spinner" /> : null}
-                📢 ยืนยันเรียกคิว <span className="qc-kbd">F1</span>
-              </button>
-            </div>
-          </div>
-        </div>
-      )}
-
       {/* ─── Keyboard Shortcut Help ─── */}
       {showShortcutHelp && (
         <div className="qc-confirm-overlay" onClick={() => setShowShortcutHelp(false)}>
@@ -2052,7 +2124,7 @@ export default function QueueCallPage() {
               <div className="qc-shortcut-section">การเรียกคิว</div>
               <div className="qc-shortcut-row">
                 <span className="qc-shortcut-keys"><kbd>F1</kbd></span>
-                <span className="qc-shortcut-desc">ยืนยันเรียกคิว (เมื่อ dialog เปิดอยู่)</span>
+                <span className="qc-shortcut-desc">ยืนยันการเรียกคิว</span>
               </div>
               <div className="qc-shortcut-row">
                 <span className="qc-shortcut-keys"><kbd>F2</kbd></span>
@@ -2079,6 +2151,37 @@ export default function QueueCallPage() {
                 <span className="qc-shortcut-keys"><kbd>ตัวเลข / ตัวอักษร</kbd></span>
                 <span className="qc-shortcut-desc">เรียกตามเลขคิว / HN</span>
               </div>
+            </div>
+          </div>
+        </div>
+      )}
+
+      {/* ─── Priority (ความเร่งด่วน) color settings ─── */}
+      {showPriorityModal && (
+        <div className="qc-confirm-overlay" onClick={() => setShowPriorityModal(false)}>
+          <div className="qc-priority-modal" onClick={e => e.stopPropagation()}>
+            <div className="qc-shortcut-hd">
+              <svg width="18" height="18" viewBox="0 0 24 24" fill="none">
+                <path d="M12 2l3 7h7l-5.5 4.5L18.5 21 12 16.5 5.5 21l2-7.5L2 9h7z" stroke="currentColor" strokeWidth="1.8" strokeLinejoin="round"/>
+              </svg>
+              ตั้งค่าสีความเร่งด่วน
+              <button className="qc-shortcut-close" onClick={() => setShowPriorityModal(false)}>✕</button>
+            </div>
+            <div className="qc-priority-body">
+              {priorityList.length === 0 ? (
+                <div className="qc-priority-empty">ไม่พบข้อมูลความเร่งด่วนจากฐานข้อมูล (ตาราง pt_priority)</div>
+              ) : priorityList.map(p => (
+                <div className="qc-priority-row" key={p.id}>
+                  <input type="color" className="qc-priority-color"
+                    value={priorityColors[p.id] || '#CFD8DC'}
+                    onChange={e => {
+                      const next = { ...priorityColors, [p.id]: e.target.value }
+                      setPriorityColors(next)
+                      savePrioritySettings({ enabled: priorityEnabled, colors: next })
+                    }} />
+                  <span className="qc-priority-name">{p.name}</span>
+                </div>
+              ))}
             </div>
           </div>
         </div>

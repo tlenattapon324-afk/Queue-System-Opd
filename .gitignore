@@ -10,6 +10,11 @@ data/tts-cache/
 data/qd-config-*.json
 data/queue-calls-today.json
 data/qd-default-config.json
+data/queue-staging.json
+
+# Generated/cached at build time — regenerated locally (tts-cache can be 100s of MB)
+build/tts-cache/
+build/icon-tmp/
 
 # Installer binaries
 release/

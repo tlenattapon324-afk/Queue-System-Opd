@@ -203,6 +203,7 @@ export interface CallEntry {
   calledAt: string
   queueNo: string
   department?: string
+  visitType?: string
   clearedFromDisplay?: boolean
 }
 
@@ -258,7 +259,7 @@ export async function previewServerTTS(text: string, voiceName: string, rate: nu
 }
 
 export function onQueueCalled(
-  cb: (data: { queueNo: string; servicePoint: string; audioUrl?: string | null; displayConfigId?: string | null; department?: string }) => void
+  cb: (data: { queueNo: string; servicePoint: string; audioUrl?: string | null; displayConfigId?: string | null; department?: string; visitType?: string }) => void
 ): () => void {
   if (isElectron()) return window.electronAPI.onQueueCalled(cb)
   if (typeof window !== 'undefined') getWS()
@@ -286,6 +287,26 @@ export async function updateServicePoint(id: string, name: string): Promise<{ su
 export async function deleteServicePoint(id: string): Promise<{ success: boolean }> {
   if (isElectron()) return (window.electronAPI as any).deleteServicePoint?.(id) ?? { success: false }
   return fetchJSON(`/service-points/${id}`, { method: 'DELETE' })
+}
+
+// ─── Priority (ความเร่งด่วน) ───────────────────────────────────────────────────
+
+export interface PriorityItem { id: string; name: string }
+export interface PrioritySettings { enabled: boolean; colors: Record<string, string> }
+
+export async function getPriorityList(): Promise<PriorityItem[]> {
+  try {
+    const res = await fetchJSON<{ success: boolean; data: PriorityItem[] }>('/priority/list')
+    return res.success ? res.data : []
+  } catch { return [] }
+}
+
+export async function getPrioritySettings(): Promise<PrioritySettings> {
+  try { return await fetchJSON<PrioritySettings>('/priority/settings') } catch { return { enabled: false, colors: {} } }
+}
+
+export async function savePrioritySettings(settings: PrioritySettings): Promise<{ success: boolean }> {
+  return fetchJSON('/priority/settings', { method: 'POST', body: JSON.stringify(settings) })
 }
 
 // ─── Display ──────────────────────────────────────────────────────────────────

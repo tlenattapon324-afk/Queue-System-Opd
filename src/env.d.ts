@@ -26,6 +26,8 @@ interface QueueItem {
   clinic_name?: string | null
   ist_name?: string | null
   ost_name?: string | null
+  priority_id?: string | null
+  priority_name?: string | null
   vstdate: string
   vsttime: string
   sign_datetime?: string | null

@@ -329,6 +329,15 @@
   cursor: pointer;
 }
 .qc-sd-checkbox input { accent-color: #1565C0; width: 15px; height: 15px; cursor: pointer; }
+.qc-sd-priority-row { display: flex; align-items: center; justify-content: space-between; padding-right: 12px; }
+.qc-sd-priority-row .qc-sd-checkbox { padding-right: 0; flex: 1; }
+.qc-sd-priority-config-btn {
+  padding: 3px 10px; border-radius: 6px;
+  background: rgba(13,71,161,0.08); border: 1px solid rgba(13,71,161,0.15);
+  color: #1565C0; font-family: inherit; font-size: 11px; font-weight: 600;
+  cursor: pointer; transition: background 0.15s;
+}
+.qc-sd-priority-config-btn:hover { background: rgba(13,71,161,0.16); }
 
 /* ── Body ── */
 .qc-body {
@@ -396,8 +405,11 @@
   border: 2px solid rgba(255,255,255,0.4); border-top-color: #fff;
   border-radius: 50%; animation: spin 0.7s linear infinite; display: inline-block;
 }
-.qc-btn-next  { background: linear-gradient(135deg,#1565C0,#1976D2); color:#fff; box-shadow:0 4px 16px rgba(21,101,192,0.45); }
+.qc-btn-next  { background: linear-gradient(135deg,#1565C0,#1976D2); color:#fff; box-shadow:0 4px 16px rgba(21,101,192,0.45); padding: 18px 12px; font-size: 18px; }
 .qc-btn-next:hover:not(:disabled)  { background: linear-gradient(135deg,#1976D2,#1E88E5); }
+.qc-btn-next .qc-btn-icon { font-size: 20px; }
+.qc-btn-confirm { background: linear-gradient(135deg,#00897B,#00BCD4); color:#fff; box-shadow:0 4px 16px rgba(0,137,123,0.4); }
+.qc-btn-confirm:hover:not(:disabled) { background: linear-gradient(135deg,#00BCD4,#26C6DA); }
 .qc-btn-recall { background:#E8F5E9; color:#2E7D32; border:2px solid #A5D6A7; }
 .qc-btn-recall:hover:not(:disabled) { background:#C8E6C9; border-color:#66BB6A; }
 .qc-btn-noshow { background: linear-gradient(135deg,#C62828,#E53935); color:#fff; box-shadow:0 4px 14px rgba(198,40,40,0.35); }
@@ -429,6 +441,13 @@
 .qc-manual-label {
   font-size: 13px; font-weight: 700; color: rgba(20,70,80,0.85);
   margin-bottom: 8px; letter-spacing: 0.3px;
+  display: flex; align-items: center; gap: 6px; flex-wrap: wrap;
+}
+.qc-manual-cross-dept-badge {
+  font-size: 10px; font-weight: 700; letter-spacing: 0.2px;
+  padding: 2px 7px; border-radius: 999px;
+  background: rgba(255,152,0,0.16); color: #E65100;
+  border: 1px solid rgba(255,152,0,0.3);
 }
 .qc-manual-form { display: flex; gap: 6px; }
 .qc-manual-input {
@@ -1108,6 +1127,26 @@
   border-bottom: 1px solid rgba(13,71,161,0.05);
 }
 .qc-shortcut-row:last-child { border-bottom: none; }
+
+/* ── Priority color modal ── */
+.qc-priority-modal {
+  background: #fff;
+  border: 1px solid rgba(13,71,161,0.12);
+  border-radius: 18px;
+  box-shadow: 0 20px 60px rgba(13,71,161,0.18);
+  width: 360px; max-height: 70vh; display: flex; flex-direction: column;
+  animation: scaleIn 0.15s ease;
+}
+.qc-priority-body { padding: 8px 20px 20px; overflow-y: auto; }
+.qc-priority-empty { padding: 20px 0; color: #90A4AE; font-size: 13px; text-align: center; }
+.qc-priority-row {
+  display: flex; align-items: center; gap: 12px;
+  padding: 9px 0;
+  border-bottom: 1px solid rgba(13,71,161,0.05);
+}
+.qc-priority-row:last-child { border-bottom: none; }
+.qc-priority-color { width: 32px; height: 32px; border: none; border-radius: 8px; cursor: pointer; flex-shrink: 0; padding: 0; }
+.qc-priority-name { font-size: 13px; font-weight: 600; color: #37474F; }
 .qc-shortcut-keys { display: flex; gap: 4px; flex-shrink: 0; min-width: 80px; }
 .qc-shortcut-keys kbd {
   display: inline-flex; align-items: center; justify-content: center;

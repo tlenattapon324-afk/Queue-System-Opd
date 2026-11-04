@@ -193,6 +193,42 @@
   flex: 1;
 }
 
+/* splitVisitType: header "หมายเลขที่เรียก" split into คิวนัด / คิวไม่นัด */
+.qd-th-queue-split {
+  display: flex;
+  width: 100%;
+  height: 100%;
+}
+.qd-th-queue-split-half {
+  flex: 1;
+  display: flex;
+  align-items: center;
+  justify-content: center;
+  text-align: center;
+}
+.qd-th-queue-split-half:first-child {
+  border-right: 1px solid rgba(255, 255, 255, 0.35);
+}
+
+/* splitVisitType: body cell split into two independent halves, each tracking its own
+   latest-called queue number (appt side never gets overwritten by a walk-in call, and
+   vice versa) */
+.qd-td-queue-split {
+  display: flex;
+  align-items: stretch;
+  padding: 0;
+}
+.qd-queue-split-half {
+  flex: 1;
+  display: flex;
+  flex-direction: column;
+  align-items: center;
+  justify-content: center;
+  min-width: 0;
+  gap: 2px;
+  padding: 4px 2px;
+  box-sizing: border-box;
+}
 /* Queue number cell */
 .qd-queue-cell {
   display: flex;
@@ -486,6 +522,20 @@
   padding: 0 10px;
 }
 
+/* splitVisitType: ส่วนที่ 2 กล่องช่องบริการ แยกเป็นคิวนัด / คิวไม่นัด */
+.qd-cb2-queue-box-split {
+  padding: 0;
+}
+.qd-cb2-queue-split-half {
+  flex: 1;
+  display: flex;
+  align-items: center;
+  justify-content: center;
+  min-width: 0;
+  height: 100%;
+  overflow: hidden;
+}
+
 /* ─── Right panel ─────────────────────────────────────────────── */
 .qd-right {
   flex-shrink: 0;
@@ -654,6 +704,8 @@
   padding: 16px 20px;
   border-bottom: 1px solid rgba(255,255,255,0.1);
   flex-shrink: 0;
+  cursor: move;
+  user-select: none;
 }
 .qd-panel-hd h3 {
   font-size: 16px;

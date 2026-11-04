@@ -12,12 +12,17 @@ interface QDConfig {
   title: string
   // Layout variant
   layout: 'table' | 'callboard'
+  // ตาราง layout เท่านั้น — แยกคอลัมน์ "หมายเลขที่เรียก" เป็นคิวนัด / คิวไม่นัด (walk-in) ตาม
+  // visit_type ของคิวที่เรียก แต่ละฝั่งจำค่าล่าสุดของตัวเองแยกกัน ไม่ทับกัน
+  splitVisitType: boolean
   showUpcoming: boolean
   upcomingCount: number
   cbFontSize1: number // ขนาดตัวอักษร ส่วนที่ 1 (บล็อกคิวปัจจุบัน)
   cbFontSize2: number // ขนาดตัวอักษร ส่วนที่ 2 (ช่องบริการ)
   cbBg1: string // สีพื้นหลัง ส่วนที่ 1
   cbBg2: string // สีพื้นหลัง ส่วนที่ 2
+  cbBg2Appt: string // สีพื้นหลัง ส่วนที่ 2 ฝั่งคิวนัด (เมื่อ splitVisitType เปิด)
+  cbBg2Walkin: string // สีพื้นหลัง ส่วนที่ 2 ฝั่งคิวไม่นัด (เมื่อ splitVisitType เปิด)
   cbSpFontSize2: number // ขนาดตัวอักษรกล่อง "ช่อง" ในส่วนที่ 2 (แยกจาก spFontSize ของจอตาราง)
   showCbLeft: boolean // แสดง/ซ่อนส่วนที่ 1 "คิวที่กำลังเรียก" ทั้งบล็อก (callboard layout)
   cbHeader1: string // หัวคอลัมน์ ส่วนที่ 1 (พิมพ์ข้อความเองได้)
@@ -44,6 +49,8 @@ interface QDConfig {
   showNoShowPanel: boolean
   noShowItemHeight: number
   queueBg: string
+  queueBgAppt: string // สีพื้นช่องแสดงคิว ฝั่งคิวนัด (เมื่อ splitVisitType เปิด)
+  queueBgWalkin: string // สีพื้นช่องแสดงคิว ฝั่งคิวไม่นัด (เมื่อ splitVisitType เปิด)
   queueColor: string
   spDisplayNames: Record<string, string>
   spFontSize: number
@@ -96,7 +103,7 @@ interface QDConfig {
   spRows: Record<string, number>
   // Per-column color override — key is column number (1-based) as string; falls back to
   // spColumnBg/spColumnColor/cbBg2 (or queueBg) when a column has no override set.
-  columnColors: Record<string, { spBg: string; spColor: string; queueBg: string }>
+  columnColors: Record<string, { spBg: string; spColor: string; queueBg: string; queueBgAppt: string; queueBgWalkin: string }>
   // Per-column "ช่องบริการ" header text override — key is column number (1-based) as string;
   // falls back to colSpHeader when a column has no override set.
   columnHeaderText: Record<string, string>
@@ -122,12 +129,15 @@ interface QDConfig {
 const DEFAULT: QDConfig = {
   title: 'ระบบคิวผู้ป่วยนอก',
   layout: 'table',
+  splitVisitType: false,
   showUpcoming: false,
   upcomingCount: 5,
   cbFontSize1: 10,
   cbFontSize2: 4.5,
   cbBg1: '#ffffff',
   cbBg2: '#ffffff',
+  cbBg2Appt: '',
+  cbBg2Walkin: '',
   cbSpFontSize2: 1.6,
   showCbLeft: true,
   cbHeader1: 'คิวที่กำลังเรียก',
@@ -152,6 +162,8 @@ const DEFAULT: QDConfig = {
   showNoShowPanel: true,
   noShowItemHeight: 80,
   queueBg: '#ffffff',
+  queueBgAppt: '',
+  queueBgWalkin: '',
   queueColor: '#1565c0',
   spDisplayNames: {},
   spFontSize: 6,
@@ -289,6 +301,12 @@ function normalizeSpId(sp: string): string {
   return sp.replace(/^ช่อง\s*/, '').trim()
 }
 
+// splitVisitType: แบ่งคิวเป็นฝั่งนัด/walk-in — ไม่ระบุ visit_type (เช่น mode ที่ไม่มีข้อมูลนี้) ถือเป็น
+// walk-in ไปก่อน เพราะ "นัด" คือกรณีพิเศษที่ต้องมีการจับคู่กับ oapp ชัดเจนเท่านั้น
+function visitBucket(visitType?: string): 'appt' | 'walkin' {
+  return visitType === 'appt' ? 'appt' : 'walkin'
+}
+
 // Callboard layout: shrink font size for longer queue codes so they don't overflow
 // their (narrower, screen-shared) box — unlike the table layout's full-width cell.
 function fitQueueFontSize(text: string, baseVw: number): number {
@@ -334,6 +352,11 @@ export default function QueueDisplayPage() {
   const [servicePoints, setServicePoints] = useState<ServicePoint[]>([])
   const [spQueues, setSpQueues] = useState<Record<string, string>>({})
   const [spNames, setSpNames] = useState<Record<string, string>>({})
+  // ตาราง layout + splitVisitType: จำหมายเลข/ชื่อล่าสุดแยกฝั่งนัด (appt) และ walk-in ต่อช่องบริการ
+  // อัพเดตคู่ขนานไปกับ spQueues/spNames ทุกจุดเสมอ ไม่ขึ้นกับว่า toggle เปิดอยู่หรือไม่ — เพื่อให้สลับ
+  // toggle ไปมาได้โดยไม่เสียข้อมูลที่เรียกไปแล้ว
+  const [spQueuesByVisit, setSpQueuesByVisit] = useState<Record<string, { appt?: string; walkin?: string }>>({})
+  const [spNamesByVisit, setSpNamesByVisit] = useState<Record<string, { appt?: string; walkin?: string }>>({})
   const [rowAnimKeys, setRowAnimKeys] = useState<Record<string, number>>({})
   // Track call order — most recently called SP moves to top of display
   const [spCallOrder, setSpCallOrder] = useState<string[]>([])
@@ -359,8 +382,8 @@ export default function QueueDisplayPage() {
   // calling a second queue (even to a different channel) before the first's audio arrives would
   // cancel the first call's 9s fallback via a shared ref, silently losing its announcement if the
   // server audio for it never arrives either.
-  const pendingDisplayRef = useRef<Array<{sp:string; queueNo:string; queueName:string; displayConfigId?:string|null; department?:string; played: boolean; fallbackTimer?: ReturnType<typeof setTimeout>}>>([])
-  const audioQueue = useRef<Array<{ url: string; volume: number; display?: {sp:string; queueNo:string; queueName:string; department?:string} }>>([])
+  const pendingDisplayRef = useRef<Array<{sp:string; queueNo:string; queueName:string; displayConfigId?:string|null; department?:string; visitType?:string; played: boolean; fallbackTimer?: ReturnType<typeof setTimeout>}>>([])
+  const audioQueue = useRef<Array<{ url: string; volume: number; display?: {sp:string; queueNo:string; queueName:string; department?:string; visitType?:string} }>>([])
   const audioPlaying = useRef(false)
   const audioGeneration = useRef(0)
   // Single reusable element — avoids Android WebView's ~12 HTMLAudioElement per-page hard limit
@@ -379,6 +402,11 @@ export default function QueueDisplayPage() {
   const [previewError, setPreviewError] = useState<string>('')
   const resizeStartX = useRef(0)
   const resizeStartW = useRef(0)
+
+  // ลากหัวพาเนล "ตั้งค่าการแสดงผล" เพื่อขยับตำแหน่งซ้าย/ขวา (ค่าเริ่มต้น = กึ่งกลางจอเสมอ)
+  const [panelOffset, setPanelOffset] = useState({ x: 0, y: 0 })
+  const isDraggingPanel = useRef(false)
+  const panelDragStart = useRef({ x: 0, y: 0, offX: 0, offY: 0 })
 
   // Password dialog for enabling ttsShowName
   const [showNamePwdDialog, setShowNamePwdDialog] = useState(false)
@@ -571,6 +599,48 @@ export default function QueueDisplayPage() {
     return () => clearInterval(t)
   }, [])
 
+  // อัพเดตทั้ง spQueues/spNames (รวม) และ spQueuesByVisit/spNamesByVisit (แยกนัด/walk-in) พร้อมกัน
+  // ทุกจุดที่มีคิวใหม่เข้ามา — เก็บคู่ขนานเสมอไม่ว่า splitVisitType จะเปิดอยู่หรือไม่
+  const applyQueueUpdate = (sp: string, queueNo: string, queueName: string, visitType?: string) => {
+    setSpQueues(prev => ({ ...prev, [sp]: queueNo }))
+    setSpNames(prev => ({ ...prev, [sp]: queueName }))
+    const bucket = visitBucket(visitType)
+    setSpQueuesByVisit(prev => ({ ...prev, [sp]: { ...prev[sp], [bucket]: queueNo } }))
+    setSpNamesByVisit(prev => ({ ...prev, [sp]: { ...prev[sp], [bucket]: queueName } }))
+  }
+
+  // splitVisitType: blink เฉพาะฝั่งนัด/walk-in ที่เพิ่งถูกเรียกจริง (ไม่ใช่ทั้งคู่) — ใช้ key รวม sp+bucket
+  // เมื่อเปิด toggle นี้ ไม่งั้นใช้ sp เฉยๆ เหมือนเดิม (merged mode / "ทดสอบกระพริบ" preview)
+  const blinkKeyFor = (sp: string, visitType: string | undefined, splitVisitType: boolean) =>
+    splitVisitType ? `${sp}::${visitBucket(visitType)}` : sp
+
+  // key ของฝั่งตรงข้าม (สำหรับ clearKeys ของ triggerBlink) — เฉพาะตอน splitVisitType เปิดอยู่เท่านั้น
+  const oppositeBlinkKey = (sp: string, visitType: string | undefined, splitVisitType: boolean): string[] => {
+    if (!splitVisitType) return []
+    const opposite = visitBucket(visitType) === 'appt' ? 'walkin' : 'appt'
+    return [`${sp}::${opposite}`]
+  }
+
+  // เมื่อเรียกฝั่งหนึ่ง (เช่น walk-in) ต้องหยุดกระพริบฝั่งตรงข้าม (คิวนัด) ของช่องเดียวกันทันที ไม่ใช่แค่
+  // "ไม่เริ่มกระพริบใหม่ให้ฝั่งนั้น" — ถ้าฝั่งตรงข้ามกำลังกระพริบค้างจากการเรียกครั้งก่อนอยู่พอดี (กรณีเรียก
+  // ติดกันเร็วๆ ในห้องเดียวกัน ก่อนที่รอบกระพริบเดิมจะครบ) จะเห็นกระพริบคู่กันทั้งที่เรียกแค่ฝั่งเดียว
+  const triggerBlink = (key: string, blinkCount: number, blinkSpeed: number, clearKeys: string[] = []) => {
+    clearKeys.forEach(k => {
+      clearTimeout(blinkTimers.current[k])
+      delete blinkTimers.current[k]
+    })
+    clearTimeout(blinkTimers.current[key])
+    setBlinkingSPs(prev => {
+      const n = new Set(prev)
+      clearKeys.forEach(k => n.delete(k))
+      n.add(key)
+      return n
+    })
+    blinkTimers.current[key] = setTimeout(() => {
+      setBlinkingSPs(prev => { const n = new Set(prev); n.delete(key); return n })
+    }, blinkCount * blinkSpeed * 2 + 400)
+  }
+
   // WebSocket: real-time queue call events
   useEffect(() => {
     const off = onQueueCalled(data => {
@@ -594,6 +664,7 @@ export default function QueueDisplayPage() {
           queueName: (data as any).queueName || '',
           displayConfigId: data.displayConfigId,
           department: (data as any).department,
+          visitType: data.visitType,
           played: false
         }
         pendingDisplayRef.current.push(entry)
@@ -604,24 +675,18 @@ export default function QueueDisplayPage() {
           entry.played = true
           const pi = pendingDisplayRef.current.indexOf(entry)
           if (pi >= 0) pendingDisplayRef.current.splice(pi, 1)
-          setSpQueues(prev => ({ ...prev, [entry.sp]: entry.queueNo }))
-          setSpNames(prev => ({ ...prev, [entry.sp]: entry.queueName }))
+          applyQueueUpdate(entry.sp, entry.queueNo, entry.queueName, entry.visitType)
           setRowAnimKeys(prev => ({ ...prev, [entry.sp]: (prev[entry.sp] || 0) + 1 }))
           setLastCalled({ sp: entry.sp, queueNo: entry.queueNo, queueName: entry.queueName, department: entry.department, animKey: Date.now() })
           playTTS(entry.queueNo, entry.sp, snapCfg, entry.queueName)
         }, 9000)
       } else {
         // Non-server TTS or no TTS — update display immediately
-        setSpQueues(prev => ({ ...prev, [sp]: data.queueNo }))
-        setSpNames(prev => ({ ...prev, [sp]: (data as any).queueName || '' }))
+        applyQueueUpdate(sp, data.queueNo, (data as any).queueName || '', data.visitType)
         setRowAnimKeys(prev => ({ ...prev, [sp]: (prev[sp] || 0) + 1 }))
         setLastCalled({ sp, queueNo: data.queueNo, queueName: (data as any).queueName || '', department: (data as any).department, animKey: Date.now() })
         if (cfg.blinkEnabled) {
-          clearTimeout(blinkTimers.current[sp])
-          setBlinkingSPs(prev => new Set([...prev, sp]))
-          blinkTimers.current[sp] = setTimeout(() => {
-            setBlinkingSPs(prev => { const n = new Set(prev); n.delete(sp); return n })
-          }, cfg.blinkCount * cfg.blinkSpeed * 2 + 400)
+          triggerBlink(blinkKeyFor(sp, data.visitType, cfg.splitVisitType), cfg.blinkCount, cfg.blinkSpeed, oppositeBlinkKey(sp, data.visitType, cfg.splitVisitType))
         }
         if (cfg.ttsEnabled && cfg.ttsSource !== 'server') {
           playTTS(data.queueNo, sp, cfg, (data as any).queueName)
@@ -759,25 +824,34 @@ export default function QueueDisplayPage() {
       const item = audioQueue.current.shift()!
       // Apply display update BEFORE playing audio — ensures display shows new queue as announcement starts
       if (item.display) {
-        const { sp, queueNo, queueName, department } = item.display
-        setSpQueues(prev => ({ ...prev, [sp]: queueNo }))
-        setSpNames(prev => ({ ...prev, [sp]: queueName }))
+        const { sp, queueNo, queueName, department, visitType } = item.display
+        applyQueueUpdate(sp, queueNo, queueName, visitType)
         setRowAnimKeys(prev => ({ ...prev, [sp]: (prev[sp] || 0) + 1 }))
         setLastCalled({ sp, queueNo, queueName, department, animKey: Date.now() })
         if (configRef.current.blinkEnabled) {
-          clearTimeout(blinkTimers.current[sp])
-          // Force the CSS blink animation to restart from frame 0 even if this sp is already
+          const key = blinkKeyFor(sp, visitType, configRef.current.splitVisitType)
+          const oppositeKeys = oppositeBlinkKey(sp, visitType, configRef.current.splitVisitType)
+          clearTimeout(blinkTimers.current[key])
+          oppositeKeys.forEach(k => { clearTimeout(blinkTimers.current[k]); delete blinkTimers.current[k] })
+          // Force the CSS blink animation to restart from frame 0 even if this key is already
           // blinking (e.g. "อ่านคิว 2 รอบ", or a second call landing before the first blink
-          // finished) — re-adding to a Set that already has sp is a no-op React can see right
+          // finished) — re-adding to a Set that already has key is a no-op React can see right
           // through, so the animation just keeps running instead of restarting. Dropping it first
           // and re-adding on the next frame removes the animation style and reapplies it, which
-          // is what actually makes the browser restart it.
-          setBlinkingSPs(prev => { const n = new Set(prev); n.delete(sp); return n })
-          requestAnimationFrame(() => {
-            setBlinkingSPs(prev => new Set([...prev, sp]))
+          // is what actually makes the browser restart it. Also drop the opposite bucket's key here
+          // (not just skip re-adding it) so a call to one side always stops a still-blinking sibling
+          // from a previous call, instead of letting both blink together until the sibling's own timer expires.
+          setBlinkingSPs(prev => {
+            const n = new Set(prev)
+            n.delete(key)
+            oppositeKeys.forEach(k => n.delete(k))
+            return n
           })
-          blinkTimers.current[sp] = setTimeout(() => {
-            setBlinkingSPs(prev => { const n = new Set(prev); n.delete(sp); return n })
+          requestAnimationFrame(() => {
+            setBlinkingSPs(prev => new Set([...prev, key]))
+          })
+          blinkTimers.current[key] = setTimeout(() => {
+            setBlinkingSPs(prev => { const n = new Set(prev); n.delete(key); return n })
           }, configRef.current.blinkCount * configRef.current.blinkSpeed * 2 + 400)
         }
       }
@@ -795,7 +869,7 @@ export default function QueueDisplayPage() {
     }
   }
 
-  const enqueueAudio = (url: string, volume: number, display?: {sp:string; queueNo:string; queueName:string; department?:string}) => {
+  const enqueueAudio = (url: string, volume: number, display?: {sp:string; queueNo:string; queueName:string; department?:string; visitType?:string}) => {
     audioQueue.current.push({ url, volume, display })
     drainAudioQueue(audioGeneration.current)
   }
@@ -824,7 +898,7 @@ export default function QueueDisplayPage() {
         if (pending) { pending.played = true; if (pending.fallbackTimer) clearTimeout(pending.fallbackTimer) }
       }
       // Enqueue audio + display update — drain applies display then plays audio in order
-      const displayUpdate = pending ? { sp: pending.sp, queueNo: pending.queueNo, queueName: pending.queueName, department: pending.department } : undefined
+      const displayUpdate = pending ? { sp: pending.sp, queueNo: pending.queueNo, queueName: pending.queueName, department: pending.department, visitType: pending.visitType } : undefined
       enqueueAudio(data.audioUrl, cfg.ttsVolume ?? 1, displayUpdate)
       // "อ่านคิว 2 รอบ" — queue the same clip again right after, replaying the same blink/row
       // animation too so the second read looks and sounds identical to the first
@@ -852,6 +926,8 @@ export default function QueueDisplayPage() {
       if (data.displayConfigId && cfg.displayConfigId && data.displayConfigId !== cfg.displayConfigId) return
       setSpQueues({})
       setSpNames({})
+      setSpQueuesByVisit({})
+      setSpNamesByVisit({})
       setLastCalled(null)
       // Server already deleted the matching no-show entries (so a later poll stays clear too);
       // clear it here as well for instant feedback instead of waiting for the next poll.
@@ -891,6 +967,26 @@ export default function QueueDisplayPage() {
     }
     const onUp = () => {
       isResizing.current = false
+      document.removeEventListener('mousemove', onMove)
+      document.removeEventListener('mouseup', onUp)
+    }
+    document.addEventListener('mousemove', onMove)
+    document.addEventListener('mouseup', onUp)
+  }
+
+  const startPanelDrag = (e: React.MouseEvent) => {
+    if ((e.target as HTMLElement).closest('.qd-panel-close')) return
+    e.preventDefault()
+    isDraggingPanel.current = true
+    panelDragStart.current = { x: e.clientX, y: e.clientY, offX: panelOffset.x, offY: panelOffset.y }
+
+    const onMove = (ev: MouseEvent) => {
+      if (!isDraggingPanel.current) return
+      const { x, y, offX, offY } = panelDragStart.current
+      setPanelOffset({ x: offX + (ev.clientX - x), y: offY + (ev.clientY - y) })
+    }
+    const onUp = () => {
+      isDraggingPanel.current = false
       document.removeEventListener('mousemove', onMove)
       document.removeEventListener('mouseup', onUp)
     }
@@ -948,6 +1044,7 @@ export default function QueueDisplayPage() {
 
   const openSettings = () => {
     setShowSettings(true)
+    setPanelOffset({ x: 0, y: 0 })
     getSystemFonts().then(setSystemFonts)
   }
 
@@ -1034,7 +1131,9 @@ export default function QueueDisplayPage() {
   const border = `${config.borderWidth}px solid ${config.borderColor}`
 
   const renderColumn = (sps: typeof visibleSPs, colIdx: number) => {
-    const colColor = config.columnColors[String(colIdx + 1)]
+    // สีแยกตามคอลัมน์มีผลเฉพาะตอนตั้งหลายคอลัมน์ (ช่องตั้งค่าก็ซ่อนตอน numColumns=1) — ถ้าลดกลับมา
+    // เหลือ 1 คอลัมน์ ไม่ควรให้ค่าที่เคยตั้งไว้ตอนทดลองหลายคอลัมน์มาทับสีส่วนกลางแบบมองไม่เห็นที่มา
+    const colColor = config.numColumns > 1 ? config.columnColors[String(colIdx + 1)] : undefined
     const colHeaderText = config.columnHeaderText[String(colIdx + 1)] || config.colSpHeader
     return (
     <div key={colIdx} className="qd-main" style={{ position: 'relative', borderRight: border }}>
@@ -1048,7 +1147,12 @@ export default function QueueDisplayPage() {
           </div>
         )}
         <div className="qd-th qd-th-queue" style={{ background: config.tableHeaderBg, color: config.tableHeaderColor, borderBottom: border }}>
-          {config.colQueueHeader}
+          {config.splitVisitType ? (
+            <div className="qd-th-queue-split">
+              <span className="qd-th-queue-split-half">คิวนัด</span>
+              <span className="qd-th-queue-split-half">คิวไม่นัด</span>
+            </div>
+          ) : config.colQueueHeader}
         </div>
       </div>
       <div className="qd-tbody">
@@ -1057,11 +1161,39 @@ export default function QueueDisplayPage() {
         ) : sps.map(sp => {
           const displayName = config.spDisplayNames[sp.id] || config.spDisplayNames[sp.name] || sp.name
           const queueNo = spQueues[sp.name] || spQueues[sp.id] || ''
-          const rawName = config.ttsShowName ? (spNames[sp.name] || spNames[sp.id] || '') : ''
-          const patientName = rawName && config.maskLastName ? maskName(rawName) : rawName
-          const badge = queueNo ? extractBadge(queueNo) : null
           const rowKey = rowAnimKeys[sp.name] || rowAnimKeys[sp.id] || 0
-          const isBlinking = config.blinkEnabled && !!queueNo && (blinkingSPs.has(sp.name) || blinkingSPs.has(sp.id))
+          const isSpBlinking = (bucket?: 'appt' | 'walkin') => {
+            if (!config.blinkEnabled) return false
+            const keys = bucket
+              ? [`${sp.name}::${bucket}`, `${sp.id}::${bucket}`]
+              : [sp.name, sp.id]
+            return keys.some(k => blinkingSPs.has(k))
+          }
+          const nameFor = (raw: string) => raw && config.maskLastName ? maskName(raw) : raw
+          const renderQueueContent = (no: string, patientName: string, fontVw: number, isBlinkingCell: boolean) => {
+            if (!no) return <span className="qd-dash">—</span>
+            const badge = extractBadge(no)
+            return (
+              <div className={`qd-queue-cell ${animClass}`}>
+                {patientName ? (
+                  <>
+                    <span className="qd-queue-no-small" style={{ color: config.queueColor, ...textBlinkStyle(isBlinkingCell) }}>{badge && <span className="qd-badge-inline">{badge}</span>}{no}</span>
+                    <span className="qd-patient-name-main" style={{ color: config.queueColor, fontSize: `${fontVw * 0.65}vw` }}>{patientName}</span>
+                  </>
+                ) : (
+                  <>
+                    {badge && <span className="qd-badge">{badge}</span>}
+                    <span className="qd-queue-no" style={{ color: config.queueColor, fontSize: `${fontVw}vw`, ...textBlinkStyle(isBlinkingCell) }}>{no}</span>
+                  </>
+                )}
+              </div>
+            )
+          }
+          const blinkBgStyle = (on: boolean) => on && config.blinkTarget !== 'text' ? ({
+            animation: `qd-blink-anim ${config.blinkSpeed}ms step-end ${config.blinkCount}`,
+            '--qd-blink-color': config.blinkColor,
+            '--qd-queue-bg': config.queueBg,
+          } as React.CSSProperties) : {}
           return (
             <div key={sp.id} className="qd-row" style={{ borderBottom: border }}>
               {config.spColumnVisible && (
@@ -1069,30 +1201,36 @@ export default function QueueDisplayPage() {
                   {displayName}
                 </div>
               )}
-              <div key={`q-${rowKey}`} className="qd-td qd-td-queue" style={{
-                background: colColor?.queueBg || config.queueBg,
-                ...(isBlinking && config.blinkTarget !== 'text' ? {
-                  animation: `qd-blink-anim ${config.blinkSpeed}ms step-end ${config.blinkCount}`,
-                  '--qd-blink-color': config.blinkColor,
-                  '--qd-queue-bg': config.queueBg,
-                } as React.CSSProperties : {})
-              }}>
-                {queueNo ? (
-                  <div className={`qd-queue-cell ${animClass}`}>
-                    {patientName ? (
+              {config.splitVisitType ? (
+                <div key={`q-${rowKey}`} className="qd-td qd-td-queue qd-td-queue-split" style={{ background: colColor?.queueBg || config.queueBg }}>
+                  {(() => {
+                    const apptNo = spQueuesByVisit[sp.name]?.appt || spQueuesByVisit[sp.id]?.appt || ''
+                    const walkinNo = spQueuesByVisit[sp.name]?.walkin || spQueuesByVisit[sp.id]?.walkin || ''
+                    const apptName = config.ttsShowName ? nameFor(spNamesByVisit[sp.name]?.appt || spNamesByVisit[sp.id]?.appt || '') : ''
+                    const walkinName = config.ttsShowName ? nameFor(spNamesByVisit[sp.name]?.walkin || spNamesByVisit[sp.id]?.walkin || '') : ''
+                    const apptBlinking = !!apptNo && isSpBlinking('appt')
+                    const walkinBlinking = !!walkinNo && isSpBlinking('walkin')
+                    // คอลัมน์ยิ่งเยอะ ความกว้างต่อคอลัมน์ยิ่งแคบ (qd-main flex:1 แบ่งเท่ากัน) — ลดฐาน
+                    // font ตามจำนวนคอลัมน์ก่อน แล้วค่อยหด (fitQueueFontSize) ตามความยาวของเลขคิวแต่ละฝั่ง
+                    // ไม่งั้นแถบนัด/ไม่นัดที่แบ่งครึ่งคอลัมน์อีกชั้นจะล้นทับกันเมื่อตั้งค่าหลายคอลัมน์
+                    const splitBaseVw = (config.fontSize * 0.75) / Math.max(config.numColumns, 1)
+                    return (
                       <>
-                        <span className="qd-queue-no-small" style={{ color: config.queueColor, ...textBlinkStyle(isBlinking) }}>{badge && <span className="qd-badge-inline">{badge}</span>}{queueNo}</span>
-                        <span className="qd-patient-name-main" style={{ color: config.queueColor, fontSize: `${config.fontSize * 0.65}vw` }}>{patientName}</span>
+                        <div className="qd-queue-split-half" style={{ background: colColor?.queueBgAppt || colColor?.queueBg || config.queueBgAppt || config.queueBg, borderRight: border, ...blinkBgStyle(apptBlinking) }}>
+                          {renderQueueContent(apptNo, apptName, fitQueueFontSize(apptNo, splitBaseVw), apptBlinking)}
+                        </div>
+                        <div className="qd-queue-split-half" style={{ background: colColor?.queueBgWalkin || colColor?.queueBg || config.queueBgWalkin || config.queueBg, ...blinkBgStyle(walkinBlinking) }}>
+                          {renderQueueContent(walkinNo, walkinName, fitQueueFontSize(walkinNo, splitBaseVw), walkinBlinking)}
+                        </div>
                       </>
-                    ) : (
-                      <>
-                        {badge && <span className="qd-badge">{badge}</span>}
-                        <span className="qd-queue-no" style={{ color: config.queueColor, fontSize: `${config.fontSize}vw`, ...textBlinkStyle(isBlinking) }}>{queueNo}</span>
-                      </>
-                    )}
-                  </div>
-                ) : <span className="qd-dash">—</span>}
-              </div>
+                    )
+                  })()}
+                </div>
+              ) : (
+                <div key={`q-${rowKey}`} className="qd-td qd-td-queue" style={{ background: colColor?.queueBg || config.queueBg, ...blinkBgStyle(!!queueNo && isSpBlinking()) }}>
+                  {renderQueueContent(queueNo, config.ttsShowName ? nameFor(spNames[sp.name] || spNames[sp.id] || '') : '', config.fontSize, !!queueNo && isSpBlinking())}
+                </div>
+              )}
             </div>
           )
         })}
@@ -1108,7 +1246,11 @@ export default function QueueDisplayPage() {
       : {}
 
   const renderCallboard = () => {
-    const cbIsBlinking = config.blinkEnabled && !!lastCalled && blinkingSPs.has(lastCalled.sp)
+    // splitVisitType เก็บสถานะกระพริบด้วย key รวม sp+bucket (sp::appt / sp::walkin) ไม่ใช่ sp เฉยๆ —
+    // ส่วนที่ 1 แสดงคิวล่าสุดที่เรียกรวมทุกประเภท จึงต้องเช็คทั้ง key เปล่าและ key ทั้งสอง bucket
+    const cbIsBlinking = config.blinkEnabled && !!lastCalled && (
+      blinkingSPs.has(lastCalled.sp) || blinkingSPs.has(`${lastCalled.sp}::appt`) || blinkingSPs.has(`${lastCalled.sp}::walkin`)
+    )
     const cbRawName = lastCalled && config.ttsShowName ? lastCalled.queueName : ''
     const cbPatientName = cbRawName && config.maskLastName ? maskName(cbRawName) : cbRawName
     const cbBadge = lastCalled?.queueNo ? extractBadge(lastCalled.queueNo) : null
@@ -1175,7 +1317,7 @@ export default function QueueDisplayPage() {
               <div className="qd-empty">{servicePoints.length === 0 ? 'กำลังโหลด...' : '—'}</div>
             </div>
           ) : columnGroups.map((sps, colIdx) => {
-            const colColor = config.columnColors[String(colIdx + 1)]
+            const colColor = config.numColumns > 1 ? config.columnColors[String(colIdx + 1)] : undefined
             const colHeaderText = config.columnHeaderText[String(colIdx + 1)] || config.colSpHeader
             return (
             <div className="qd-cb2-col" key={colIdx} style={{ position: 'relative' }}>
@@ -1187,7 +1329,12 @@ export default function QueueDisplayPage() {
                   {colHeaderText}
                 </div>
                 <div className="qd-cb2-th-queue" style={{ height: config.cbHeaderHeight, background: config.tableHeaderBg, color: config.tableHeaderColor, fontSize: cbHeaderFontSize }}>
-                  {config.colQueueHeader}
+                  {config.splitVisitType ? (
+                    <div className="qd-th-queue-split">
+                      <span className="qd-th-queue-split-half">คิวนัด</span>
+                      <span className="qd-th-queue-split-half">คิวไม่นัด</span>
+                    </div>
+                  ) : config.colQueueHeader}
                 </div>
               </div>
               <div className="qd-cb2-wrap">
@@ -1195,9 +1342,26 @@ export default function QueueDisplayPage() {
                   const displayName = config.spDisplayNames[sp.id] || config.spDisplayNames[sp.name] || sp.name
                   const queueNo = spQueues[sp.name] || spQueues[sp.id] || ''
                   const rowKey = rowAnimKeys[sp.name] || rowAnimKeys[sp.id] || 0
-                  const chIsBlinking = config.blinkEnabled && !!queueNo && (blinkingSPs.has(sp.name) || blinkingSPs.has(sp.id))
-                  const qn2FontSize = queueNo ? fitQueueFontSize(queueNo, config.cbFontSize2) : config.cbFontSize2 * 0.6
+                  const isSpBlinking = (bucket?: 'appt' | 'walkin') => {
+                    if (!config.blinkEnabled) return false
+                    const keys = bucket
+                      ? [`${sp.name}::${bucket}`, `${sp.id}::${bucket}`]
+                      : [sp.name, sp.id]
+                    return keys.some(k => blinkingSPs.has(k))
+                  }
                   const boxBorder = `${config.borderWidth}px solid ${config.borderColor}`
+                  const renderQueueNo = (no: string, fontBaseVw: number, isBlinkingCell: boolean) => {
+                    const fs = no ? fitQueueFontSize(no, fontBaseVw) : fontBaseVw * 0.6
+                    return (
+                      <div key={`ch-${rowKey}`} className={`qd-cb2-queue-no ${animClass}`}
+                        style={{ color: config.queueColor, fontSize: `${fs}vw`, ...textBlinkStyle(isBlinkingCell) }}>
+                        {no || <span className="qd-dash" style={{ fontSize: 'inherit' }}>—</span>}
+                      </div>
+                    )
+                  }
+                  const blinkBgStyle = (on: boolean) => on && config.blinkTarget !== 'text' ? ({
+                    animation: `qd-blink-anim-cb2 ${config.blinkSpeed}ms step-end ${config.blinkCount}`,
+                  } as React.CSSProperties) : {}
                   return (
                     <div key={sp.id} className="qd-cb2-row">
                       <div className="qd-cb2-sp-box" style={{
@@ -1207,18 +1371,30 @@ export default function QueueDisplayPage() {
                       }}>
                         {displayName}
                       </div>
-                      <div key={`qbox-${rowKey}`} className="qd-cb2-queue-box" style={{
-                        background: colColor?.queueBg || config.cbBg2,
-                        border: boxBorder,
-                        ...(chIsBlinking && config.blinkTarget !== 'text' ? {
-                          animation: `qd-blink-anim-cb2 ${config.blinkSpeed}ms step-end ${config.blinkCount}`,
-                        } as React.CSSProperties : {})
-                      }}>
-                        <div key={`ch-${rowKey}`} className={`qd-cb2-queue-no ${animClass}`}
-                          style={{ color: config.queueColor, fontSize: `${qn2FontSize}vw`, ...textBlinkStyle(chIsBlinking) }}>
-                          {queueNo || <span className="qd-dash" style={{ fontSize: 'inherit' }}>—</span>}
+                      {config.splitVisitType ? (
+                        <div key={`qbox-${rowKey}`} className="qd-cb2-queue-box qd-cb2-queue-box-split" style={{ background: colColor?.queueBg || config.cbBg2, border: boxBorder }}>
+                          {(() => {
+                            const apptNo = spQueuesByVisit[sp.name]?.appt || spQueuesByVisit[sp.id]?.appt || ''
+                            const walkinNo = spQueuesByVisit[sp.name]?.walkin || spQueuesByVisit[sp.id]?.walkin || ''
+                            const apptBlinking = !!apptNo && isSpBlinking('appt')
+                            const walkinBlinking = !!walkinNo && isSpBlinking('walkin')
+                            return (
+                              <>
+                                <div className="qd-cb2-queue-split-half" style={{ background: colColor?.queueBgAppt || colColor?.queueBg || config.cbBg2Appt || config.cbBg2, borderRight: boxBorder, ...blinkBgStyle(apptBlinking) }}>
+                                  {renderQueueNo(apptNo, config.cbFontSize2 * 0.75, apptBlinking)}
+                                </div>
+                                <div className="qd-cb2-queue-split-half" style={{ background: colColor?.queueBgWalkin || colColor?.queueBg || config.cbBg2Walkin || config.cbBg2, ...blinkBgStyle(walkinBlinking) }}>
+                                  {renderQueueNo(walkinNo, config.cbFontSize2 * 0.75, walkinBlinking)}
+                                </div>
+                              </>
+                            )
+                          })()}
                         </div>
-                      </div>
+                      ) : (
+                        <div key={`qbox-${rowKey}`} className="qd-cb2-queue-box" style={{ background: colColor?.queueBg || config.cbBg2, border: boxBorder, ...blinkBgStyle(!!queueNo && isSpBlinking()) }}>
+                          {renderQueueNo(queueNo, config.cbFontSize2, !!queueNo && isSpBlinking())}
+                        </div>
+                      )}
                     </div>
                   )
                 })}
@@ -1369,8 +1545,9 @@ export default function QueueDisplayPage() {
       {/* ─── SETTINGS PANEL ──────────────────────────────────── */}
       {showSettings && (
         <div className="qd-overlay">
-          <div className="qd-panel" onClick={e => e.stopPropagation()} style={{ fontFamily: fontFace }}>
-            <div className="qd-panel-hd">
+          <div className="qd-panel" onClick={e => e.stopPropagation()}
+            style={{ fontFamily: fontFace, transform: `translate(${panelOffset.x}px, ${panelOffset.y}px)` }}>
+            <div className="qd-panel-hd" onMouseDown={startPanelDrag} title="ลากเพื่อขยับตำแหน่งหน้าต่าง">
               <h3>⚙ ตั้งค่าการแสดงผล</h3>
               <button className="qd-panel-close" onClick={closeSettingsWithoutSaving}>✕</button>
             </div>
@@ -1393,6 +1570,9 @@ export default function QueueDisplayPage() {
                     บอร์ดเรียกคิว
                   </label>
                 </div>
+              </SRow>
+              <SRow label="แยกคอลัมน์หมายเลขที่เรียก เป็นคิวนัด / คิวไม่นัด" hint="ตาราง: แยกคอลัมน์ขวา | บอร์ดเรียกคิว: แยกกล่อง ส่วนที่ 2 (ช่องบริการ)">
+                <Tog checked={config.splitVisitType} onChange={v => setConfig(c => ({ ...c, splitVisitType: v }))} />
               </SRow>
               {config.layout === 'callboard' && <>
                 <SRow label="แสดงส่วนที่ 1 (คิวที่กำลังเรียก)">
@@ -1436,6 +1616,14 @@ export default function QueueDisplayPage() {
                 <SRow label="สีพื้นหลัง ส่วนที่ 2 (ช่องบริการ)">
                   <CInput value={config.cbBg2} onChange={v => setConfig(c => ({ ...c, cbBg2: v }))} />
                 </SRow>
+                {config.splitVisitType && <>
+                  <SRow label="สีพื้นหลัง ส่วนที่ 2 - ฝั่งคิวนัด">
+                    <CInput value={config.cbBg2Appt || config.cbBg2} onChange={v => setConfig(c => ({ ...c, cbBg2Appt: v }))} />
+                  </SRow>
+                  <SRow label="สีพื้นหลัง ส่วนที่ 2 - ฝั่งคิวไม่นัด">
+                    <CInput value={config.cbBg2Walkin || config.cbBg2} onChange={v => setConfig(c => ({ ...c, cbBg2Walkin: v }))} />
+                  </SRow>
+                </>}
                 <SRow label={`ขนาดตัวอักษร ส่วนที่ 2 (ช่องบริการ): ${config.cbFontSize2}vw`}>
                   <input type="range" min="2" max="12" step="0.5" value={config.cbFontSize2}
                     onChange={e => setConfig(c => ({ ...c, cbFontSize2: Number(e.target.value) }))}
@@ -1562,6 +1750,14 @@ export default function QueueDisplayPage() {
               <SRow label="สีพื้นช่องแสดงคิว">
                 <CInput value={config.queueBg} onChange={v => setConfig(c => ({ ...c, queueBg: v }))} />
               </SRow>
+              {config.splitVisitType && <>
+                <SRow label="สีพื้นช่องแสดงคิว - ฝั่งคิวนัด">
+                  <CInput value={config.queueBgAppt || config.queueBg} onChange={v => setConfig(c => ({ ...c, queueBgAppt: v }))} />
+                </SRow>
+                <SRow label="สีพื้นช่องแสดงคิว - ฝั่งคิวไม่นัด">
+                  <CInput value={config.queueBgWalkin || config.queueBg} onChange={v => setConfig(c => ({ ...c, queueBgWalkin: v }))} />
+                </SRow>
+              </>}
               <SRow label="สีตัวเลขคิว">
                 <CInput value={config.queueColor} onChange={v => setConfig(c => ({ ...c, queueColor: v }))} />
               </SRow>
@@ -1664,10 +1860,11 @@ export default function QueueDisplayPage() {
                   <SSec>ข้อความ/สีแยกตามคอลัมน์ (ไม่ตั้งค่า = ใช้ค่าเริ่มต้นด้านบน)</SSec>
                   {Array.from({ length: config.numColumns }, (_, i) => {
                     const colKey = String(i + 1)
-                    const cc = config.columnColors[colKey] || { spBg: '', spColor: '', queueBg: '' }
-                    const setCC = (patch: Partial<{ spBg: string; spColor: string; queueBg: string }>) =>
+                    const blankCC = { spBg: '', spColor: '', queueBg: '', queueBgAppt: '', queueBgWalkin: '' }
+                    const cc = config.columnColors[colKey] || blankCC
+                    const setCC = (patch: Partial<typeof blankCC>) =>
                       setConfig(c => {
-                        const existing = c.columnColors[colKey] || { spBg: '', spColor: '', queueBg: '' }
+                        const existing = c.columnColors[colKey] || blankCC
                         return { ...c, columnColors: { ...c.columnColors, [colKey]: { ...existing, ...patch } } }
                       })
                     return (
@@ -1687,6 +1884,18 @@ export default function QueueDisplayPage() {
                         <SRow label="สีพื้นกล่องแสดงคิว">
                           <CInput value={cc.queueBg || (config.layout === 'callboard' ? config.cbBg2 : config.queueBg)} onChange={v => setCC({ queueBg: v })} />
                         </SRow>
+                        {config.splitVisitType && <>
+                          <SRow label="สีพื้นกล่องแสดงคิว - ฝั่งคิวนัด" hint="ไม่ตั้งค่า = ใช้สีพื้นกล่องแสดงคิวด้านบนของคอลัมน์นี้">
+                            <CInput
+                              value={cc.queueBgAppt || cc.queueBg || (config.layout === 'callboard' ? (config.cbBg2Appt || config.cbBg2) : (config.queueBgAppt || config.queueBg))}
+                              onChange={v => setCC({ queueBgAppt: v })} />
+                          </SRow>
+                          <SRow label="สีพื้นกล่องแสดงคิว - ฝั่งคิวไม่นัด" hint="ไม่ตั้งค่า = ใช้สีพื้นกล่องแสดงคิวด้านบนของคอลัมน์นี้">
+                            <CInput
+                              value={cc.queueBgWalkin || cc.queueBg || (config.layout === 'callboard' ? (config.cbBg2Walkin || config.cbBg2) : (config.queueBgWalkin || config.queueBg))}
+                              onChange={v => setCC({ queueBgWalkin: v })} />
+                          </SRow>
+                        </>}
                       </div>
                     )
                   })}

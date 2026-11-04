@@ -1038,6 +1038,22 @@ function saveServicePoints(data) {
   fs.writeFileSync(SP_FILE, JSON.stringify(data, null, 2))
 }
 
+// ─── Priority settings (ความเร่งด่วน, จาก ovst.pt_priority / pt_priority) ────────
+const PRIORITY_SETTINGS_FILE = path.join(DATA_DIR, 'priority-settings.json')
+
+function loadPrioritySettings() {
+  try {
+    if (fs.existsSync(PRIORITY_SETTINGS_FILE)) {
+      const d = JSON.parse(fs.readFileSync(PRIORITY_SETTINGS_FILE, 'utf-8'))
+      return { enabled: !!d.enabled, colors: (d.colors && typeof d.colors === 'object') ? d.colors : {} }
+    }
+  } catch {}
+  return { enabled: false, colors: {} }
+}
+function savePrioritySettings(data) {
+  fs.writeFileSync(PRIORITY_SETTINGS_FILE, JSON.stringify(data, null, 2))
+}
+
 function getTodayCalls() {
   const today = new Date().toISOString().split('T')[0]
   try {
@@ -1085,7 +1101,9 @@ SELECT ov.vstdate, ov.vsttime,
     (SELECT d.name FROM oapp oa2 LEFT JOIN doctor d ON d.code = oa2.doctor WHERE oa2.hn = ov.hn AND oa2.nextdate = ov.vstdate AND oa2.depcode = ov.main_dep LIMIT 1) AS doctor_name,
     (SELECT c.name FROM oapp oa3 LEFT JOIN clinic c ON c.clinic = oa3.clinic WHERE oa3.hn = ov.hn AND oa3.nextdate = ov.vstdate AND oa3.depcode = ov.main_dep LIMIT 1) AS clinic_name,
     ist.name AS ist_name,
-    ost.name AS ost_name
+    ost.name AS ost_name,
+    ov.pt_priority AS priority_id,
+    pr.name AS priority_name
 FROM opd_qs_slot os
 LEFT OUTER JOIN doctor d2 ON d2.code = os.doctor_code
 LEFT JOIN ovst ov ON ov.vn = os.vn
@@ -1093,6 +1111,7 @@ LEFT JOIN patient pt ON pt.hn = ov.hn
 LEFT JOIN pttype p ON p.pttype = ov.pttype
 LEFT JOIN ovstist ist ON ist.ovstist = ov.ovstist
 LEFT JOIN ovstost ost ON ost.ovstost = ov.ovstost
+LEFT JOIN pt_priority pr ON pr.id = ov.pt_priority
 LEFT JOIN kskdepartment k ON k.depcode = ov.main_dep
 LEFT JOIN opd_qs_room oq ON oq.opd_qs_room_id = os.opd_qs_room_id
 WHERE ov.vstdate = ? AND ov.vn IS NOT NULL
@@ -1116,7 +1135,9 @@ SELECT ov.vstdate, ov.vsttime,
     (SELECT d.name FROM oapp oa2 LEFT JOIN doctor d ON d.code = oa2.doctor WHERE oa2.hn = ov.hn AND oa2.nextdate = ov.vstdate AND oa2.depcode = ov.main_dep LIMIT 1) AS doctor_name,
     (SELECT c.name FROM oapp oa3 LEFT JOIN clinic c ON c.clinic = oa3.clinic WHERE oa3.hn = ov.hn AND oa3.nextdate = ov.vstdate AND oa3.depcode = ov.main_dep LIMIT 1) AS clinic_name,
     ist.name AS ist_name,
-    ost.name AS ost_name
+    ost.name AS ost_name,
+    ov.pt_priority AS priority_id,
+    pr.name AS priority_name
 FROM opd_qs_slot os
 LEFT OUTER JOIN doctor d2 ON d2.code = os.doctor_code
 LEFT JOIN ovst ov ON ov.vn = os.vn
@@ -1124,6 +1145,7 @@ LEFT JOIN patient pt ON pt.hn = ov.hn
 LEFT JOIN pttype p ON p.pttype = ov.pttype
 LEFT JOIN ovstist ist ON ist.ovstist = ov.ovstist
 LEFT JOIN ovstost ost ON ost.ovstost = ov.ovstost
+LEFT JOIN pt_priority pr ON pr.id = ov.pt_priority
 LEFT JOIN kskdepartment k ON k.depcode = ov.main_dep
 LEFT JOIN opd_qs_room oq ON oq.opd_qs_room_id = os.opd_qs_room_id
 WHERE ov.vstdate = $1 AND ov.vn IS NOT NULL
@@ -1149,6 +1171,8 @@ SELECT ov.vstdate, ov.vsttime,
     (SELECT c.name FROM oapp oa3 LEFT JOIN clinic c ON c.clinic = oa3.clinic WHERE oa3.hn = ov.hn AND oa3.nextdate = ov.vstdate AND oa3.depcode = ov.cur_dep LIMIT 1) AS clinic_name,
     ist.name AS ist_name,
     ost.name AS ost_name,
+    ov.pt_priority AS priority_id,
+    pr.name AS priority_name,
     (SELECT MAX(ds.sign_datetime)
        FROM ovst_doctor_sign ds
       WHERE ds.vn = os.vn AND ds.sign_date = os.schedule_date) AS sign_datetime
@@ -1158,6 +1182,7 @@ LEFT JOIN patient pt ON pt.hn = ov.hn
 LEFT JOIN pttype p ON p.pttype = ov.pttype
 LEFT JOIN ovstist ist ON ist.ovstist = ov.ovstist
 LEFT JOIN ovstost ost ON ost.ovstost = ov.ovstost
+LEFT JOIN pt_priority pr ON pr.id = ov.pt_priority
 LEFT JOIN kskdepartment k ON k.depcode = ov.cur_dep
 LEFT JOIN opd_qs_room oq ON oq.opd_qs_room_id = os.opd_qs_room_id
 WHERE os.schedule_date = ? AND ov.vn IS NOT NULL
@@ -1182,6 +1207,8 @@ SELECT ov.vstdate, ov.vsttime,
     (SELECT c.name FROM oapp oa3 LEFT JOIN clinic c ON c.clinic = oa3.clinic WHERE oa3.hn = ov.hn AND oa3.nextdate = ov.vstdate AND oa3.depcode = ov.cur_dep LIMIT 1) AS clinic_name,
     ist.name AS ist_name,
     ost.name AS ost_name,
+    ov.pt_priority AS priority_id,
+    pr.name AS priority_name,
     (SELECT MAX(ds.sign_datetime)
        FROM ovst_doctor_sign ds
       WHERE ds.vn = os.vn AND ds.sign_date = os.schedule_date) AS sign_datetime
@@ -1191,6 +1218,7 @@ LEFT JOIN patient pt ON pt.hn = ov.hn
 LEFT JOIN pttype p ON p.pttype = ov.pttype
 LEFT JOIN ovstist ist ON ist.ovstist = ov.ovstist
 LEFT JOIN ovstost ost ON ost.ovstost = ov.ovstost
+LEFT JOIN pt_priority pr ON pr.id = ov.pt_priority
 LEFT JOIN kskdepartment k ON k.depcode = ov.cur_dep
 LEFT JOIN opd_qs_room oq ON oq.opd_qs_room_id = os.opd_qs_room_id
 WHERE os.schedule_date = $1 AND ov.vn IS NOT NULL
@@ -1214,12 +1242,15 @@ SELECT ov.vstdate, ov.vsttime,
     (SELECT d.name FROM oapp oa2 LEFT JOIN doctor d ON d.code = oa2.doctor WHERE oa2.hn = ov.hn AND oa2.nextdate = ov.vstdate AND oa2.depcode = ov.main_dep LIMIT 1) AS doctor_name,
     (SELECT c.name FROM oapp oa3 LEFT JOIN clinic c ON c.clinic = oa3.clinic WHERE oa3.hn = ov.hn AND oa3.nextdate = ov.vstdate AND oa3.depcode = ov.main_dep LIMIT 1) AS clinic_name,
     ist.name AS ist_name,
-    ost.name AS ost_name
+    ost.name AS ost_name,
+    ov.pt_priority AS priority_id,
+    pr.name AS priority_name
 FROM ovst ov
 LEFT JOIN patient pt ON pt.hn = ov.hn
 LEFT JOIN pttype p ON p.pttype = ov.pttype
 LEFT JOIN ovstist ist ON ist.ovstist = ov.ovstist
 LEFT JOIN ovstost ost ON ost.ovstost = ov.ovstost
+LEFT JOIN pt_priority pr ON pr.id = ov.pt_priority
 LEFT JOIN kskdepartment k ON k.depcode = ov.main_dep
 WHERE ov.vstdate = ?
 ORDER BY k.department, (ov.oqueue + 0), ov.oqueue`
@@ -1239,12 +1270,15 @@ SELECT ov.vstdate, ov.vsttime,
     (SELECT d.name FROM oapp oa2 LEFT JOIN doctor d ON d.code = oa2.doctor WHERE oa2.hn = ov.hn AND oa2.nextdate = ov.vstdate AND oa2.depcode = ov.main_dep LIMIT 1) AS doctor_name,
     (SELECT c.name FROM oapp oa3 LEFT JOIN clinic c ON c.clinic = oa3.clinic WHERE oa3.hn = ov.hn AND oa3.nextdate = ov.vstdate AND oa3.depcode = ov.main_dep LIMIT 1) AS clinic_name,
     ist.name AS ist_name,
-    ost.name AS ost_name
+    ost.name AS ost_name,
+    ov.pt_priority AS priority_id,
+    pr.name AS priority_name
 FROM ovst ov
 LEFT JOIN patient pt ON pt.hn = ov.hn
 LEFT JOIN pttype p ON p.pttype = ov.pttype
 LEFT JOIN ovstist ist ON ist.ovstist = ov.ovstist
 LEFT JOIN ovstost ost ON ost.ovstost = ov.ovstost
+LEFT JOIN pt_priority pr ON pr.id = ov.pt_priority
 LEFT JOIN kskdepartment k ON k.depcode = ov.main_dep
 WHERE ov.vstdate = $1
 ORDER BY k.department, (CASE WHEN ov.oqueue::text ~ '^[0-9]+$' THEN ov.oqueue::text::bigint ELSE 0 END), ov.oqueue`
@@ -1267,6 +1301,8 @@ SELECT ov.vstdate, ov.vsttime,
     (SELECT c.name FROM oapp oa3 LEFT JOIN clinic c ON c.clinic = oa3.clinic WHERE oa3.hn = ov.hn AND oa3.nextdate = ov.vstdate AND oa3.depcode = ov.cur_dep LIMIT 1) AS clinic_name,
     ist.name AS ist_name,
     ost.name AS ost_name,
+    ov.pt_priority AS priority_id,
+    pr.name AS priority_name,
     (SELECT MAX(ds.sign_datetime)
        FROM ovst_doctor_sign ds
       WHERE ds.vn = ov.vn AND ds.sign_date = ov.vstdate) AS sign_datetime
@@ -1275,6 +1311,7 @@ LEFT JOIN patient pt ON pt.hn = ov.hn
 LEFT JOIN pttype p ON p.pttype = ov.pttype
 LEFT JOIN ovstist ist ON ist.ovstist = ov.ovstist
 LEFT JOIN ovstost ost ON ost.ovstost = ov.ovstost
+LEFT JOIN pt_priority pr ON pr.id = ov.pt_priority
 LEFT JOIN kskdepartment k ON k.depcode = ov.cur_dep
 WHERE ov.vstdate = ?
   AND EXISTS (SELECT 1 FROM ovst_doctor_sign ds2 WHERE ds2.vn = ov.vn AND ds2.sign_date = ov.vstdate)
@@ -1296,6 +1333,8 @@ SELECT ov.vstdate, ov.vsttime,
     (SELECT c.name FROM oapp oa3 LEFT JOIN clinic c ON c.clinic = oa3.clinic WHERE oa3.hn = ov.hn AND oa3.nextdate = ov.vstdate AND oa3.depcode = ov.cur_dep LIMIT 1) AS clinic_name,
     ist.name AS ist_name,
     ost.name AS ost_name,
+    ov.pt_priority AS priority_id,
+    pr.name AS priority_name,
     (SELECT MAX(ds.sign_datetime)
        FROM ovst_doctor_sign ds
       WHERE ds.vn = ov.vn AND ds.sign_date = ov.vstdate) AS sign_datetime
@@ -1304,6 +1343,7 @@ LEFT JOIN patient pt ON pt.hn = ov.hn
 LEFT JOIN pttype p ON p.pttype = ov.pttype
 LEFT JOIN ovstist ist ON ist.ovstist = ov.ovstist
 LEFT JOIN ovstost ost ON ost.ovstost = ov.ovstost
+LEFT JOIN pt_priority pr ON pr.id = ov.pt_priority
 LEFT JOIN kskdepartment k ON k.depcode = ov.cur_dep
 WHERE ov.vstdate = $1
   AND EXISTS (SELECT 1 FROM ovst_doctor_sign ds2 WHERE ds2.vn = ov.vn AND ds2.sign_date = ov.vstdate)
@@ -1356,6 +1396,9 @@ SELECT ov.vn,
     (SELECT COUNT(*) FROM opitemrece WHERE vn = ov.vn AND income = '05') AS supply_count
 FROM ovst ov
 WHERE ov.vstdate = $1`
+
+// ─── Priority list (ความเร่งด่วนจากการคัดกรอง — pt_priority) ────────────────────
+const PRIORITY_LIST_SQL = `SELECT id, name FROM pt_priority ORDER BY id`
 
 // ─── Appointment doctors (for the "แสดงเฉพาะคนไข้นัด" filter's doctor list) ───
 // One row per department+doctor pair, so the client can filter it down to whichever
@@ -1425,6 +1468,7 @@ app.get('/api/queue/list', async (req, res) => {
     })
     res.json({ success: true, data })
   } catch (e) {
+    console.error('[queue/list] query error:', e.message)
     res.json({ success: false, data: [], message: e.message })
   }
 })
@@ -1479,6 +1523,7 @@ app.post('/api/queue/call', async (req, res) => {
     const displayNo = found.queue_slot || (found.queue_no != null ? String(found.queue_no) : '')
     const calls = getTodayCalls()
     const department = found.department || ''
+    const visitType = found.visit_type || ''
     calls[callsKey(found.vn, found.queue_slot)] = {
       vn: found.vn,
       status: 'calling',
@@ -1486,14 +1531,15 @@ app.post('/api/queue/call', async (req, res) => {
       calledAt: new Date().toLocaleTimeString('th-TH'),
       queueNo: displayNo,
       mode: qMode,
-      department
+      department,
+      visitType
     }
     saveTodayCalls(calls)
 
     const queueName = found.queue_name || ''
 
     // Respond and broadcast queue number immediately — don't wait for TTS
-    broadcast({ type: 'queue:called', data: { queueNo: displayNo, servicePoint: String(servicePoint), audioUrl: null, displayConfigId: displayConfigId || null, queueName, department } })
+    broadcast({ type: 'queue:called', data: { queueNo: displayNo, servicePoint: String(servicePoint), audioUrl: null, displayConfigId: displayConfigId || null, queueName, department, visitType } })
     res.json({ success: true, queueNo: displayNo, queueSlot: found.queue_slot })
 
     // Log this call into queue_opd_qs_slot (Slot modes only) — fire-and-forget
@@ -1810,6 +1856,30 @@ app.put('/api/service-points/:id', (req, res) => {
 app.delete('/api/service-points/:id', (req, res) => {
   const data = loadServicePoints().filter(sp => sp.id !== req.params.id)
   saveServicePoints(data)
+  res.json({ success: true })
+})
+
+// ─── Priority (ความเร่งด่วน) ───────────────────────────────────────────────────
+
+app.get('/api/priority/list', async (req, res) => {
+  const settings = loadSettings()
+  if (!settings) return res.json({ success: false, data: [] })
+  try {
+    const rows = await queryDB(settings, PRIORITY_LIST_SQL, PRIORITY_LIST_SQL, [])
+    res.json({ success: true, data: rows })
+  } catch (e) {
+    console.error('[priority/list] query error:', e.message)
+    res.json({ success: false, data: [], message: e.message })
+  }
+})
+
+app.get('/api/priority/settings', (req, res) => {
+  res.json(loadPrioritySettings())
+})
+
+app.post('/api/priority/settings', (req, res) => {
+  const { enabled, colors } = req.body
+  savePrioritySettings({ enabled: !!enabled, colors: (colors && typeof colors === 'object') ? colors : {} })
   res.json({ success: true })
 })
 
