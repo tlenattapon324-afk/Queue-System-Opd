@@ -1103,7 +1103,12 @@ SELECT ov.vstdate, ov.vsttime,
     ist.name AS ist_name,
     ost.name AS ost_name,
     ov.pt_priority AS priority_id,
-    pr.name AS priority_name
+    pr.name AS priority_name,
+    CASE WHEN EXISTS (
+      SELECT 1 FROM rcpt_print rpf WHERE rpf.vn = ov.vn
+    ) OR EXISTS (
+      SELECT 1 FROM rcpt_debt rdf WHERE rdf.vn = ov.vn
+    ) THEN 1 ELSE 0 END AS from_finance_dep
 FROM opd_qs_slot os
 LEFT OUTER JOIN doctor d2 ON d2.code = os.doctor_code
 LEFT JOIN ovst ov ON ov.vn = os.vn
@@ -1137,7 +1142,12 @@ SELECT ov.vstdate, ov.vsttime,
     ist.name AS ist_name,
     ost.name AS ost_name,
     ov.pt_priority AS priority_id,
-    pr.name AS priority_name
+    pr.name AS priority_name,
+    CASE WHEN EXISTS (
+      SELECT 1 FROM rcpt_print rpf WHERE rpf.vn = ov.vn
+    ) OR EXISTS (
+      SELECT 1 FROM rcpt_debt rdf WHERE rdf.vn = ov.vn
+    ) THEN 1 ELSE 0 END AS from_finance_dep
 FROM opd_qs_slot os
 LEFT OUTER JOIN doctor d2 ON d2.code = os.doctor_code
 LEFT JOIN ovst ov ON ov.vn = os.vn
@@ -1175,7 +1185,12 @@ SELECT ov.vstdate, ov.vsttime,
     pr.name AS priority_name,
     (SELECT MAX(ds.sign_datetime)
        FROM ovst_doctor_sign ds
-      WHERE ds.vn = os.vn AND ds.sign_date = os.schedule_date) AS sign_datetime
+      WHERE ds.vn = os.vn AND ds.sign_date = os.schedule_date) AS sign_datetime,
+    CASE WHEN EXISTS (
+      SELECT 1 FROM rcpt_print rpf WHERE rpf.vn = os.vn
+    ) OR EXISTS (
+      SELECT 1 FROM rcpt_debt rdf WHERE rdf.vn = os.vn
+    ) THEN 1 ELSE 0 END AS from_finance_dep
 FROM opd_qs_slot os
 LEFT JOIN ovst ov ON ov.vn = os.vn
 LEFT JOIN patient pt ON pt.hn = ov.hn
@@ -1211,7 +1226,12 @@ SELECT ov.vstdate, ov.vsttime,
     pr.name AS priority_name,
     (SELECT MAX(ds.sign_datetime)
        FROM ovst_doctor_sign ds
-      WHERE ds.vn = os.vn AND ds.sign_date = os.schedule_date) AS sign_datetime
+      WHERE ds.vn = os.vn AND ds.sign_date = os.schedule_date) AS sign_datetime,
+    CASE WHEN EXISTS (
+      SELECT 1 FROM rcpt_print rpf WHERE rpf.vn = os.vn
+    ) OR EXISTS (
+      SELECT 1 FROM rcpt_debt rdf WHERE rdf.vn = os.vn
+    ) THEN 1 ELSE 0 END AS from_finance_dep
 FROM opd_qs_slot os
 LEFT JOIN ovst ov ON ov.vn = os.vn
 LEFT JOIN patient pt ON pt.hn = ov.hn
@@ -1244,7 +1264,12 @@ SELECT ov.vstdate, ov.vsttime,
     ist.name AS ist_name,
     ost.name AS ost_name,
     ov.pt_priority AS priority_id,
-    pr.name AS priority_name
+    pr.name AS priority_name,
+    CASE WHEN EXISTS (
+      SELECT 1 FROM rcpt_print rpf WHERE rpf.vn = ov.vn
+    ) OR EXISTS (
+      SELECT 1 FROM rcpt_debt rdf WHERE rdf.vn = ov.vn
+    ) THEN 1 ELSE 0 END AS from_finance_dep
 FROM ovst ov
 LEFT JOIN patient pt ON pt.hn = ov.hn
 LEFT JOIN pttype p ON p.pttype = ov.pttype
@@ -1272,7 +1297,12 @@ SELECT ov.vstdate, ov.vsttime,
     ist.name AS ist_name,
     ost.name AS ost_name,
     ov.pt_priority AS priority_id,
-    pr.name AS priority_name
+    pr.name AS priority_name,
+    CASE WHEN EXISTS (
+      SELECT 1 FROM rcpt_print rpf WHERE rpf.vn = ov.vn
+    ) OR EXISTS (
+      SELECT 1 FROM rcpt_debt rdf WHERE rdf.vn = ov.vn
+    ) THEN 1 ELSE 0 END AS from_finance_dep
 FROM ovst ov
 LEFT JOIN patient pt ON pt.hn = ov.hn
 LEFT JOIN pttype p ON p.pttype = ov.pttype
@@ -1305,7 +1335,12 @@ SELECT ov.vstdate, ov.vsttime,
     pr.name AS priority_name,
     (SELECT MAX(ds.sign_datetime)
        FROM ovst_doctor_sign ds
-      WHERE ds.vn = ov.vn AND ds.sign_date = ov.vstdate) AS sign_datetime
+      WHERE ds.vn = ov.vn AND ds.sign_date = ov.vstdate) AS sign_datetime,
+    CASE WHEN EXISTS (
+      SELECT 1 FROM rcpt_print rpf WHERE rpf.vn = ov.vn
+    ) OR EXISTS (
+      SELECT 1 FROM rcpt_debt rdf WHERE rdf.vn = ov.vn
+    ) THEN 1 ELSE 0 END AS from_finance_dep
 FROM ovst ov
 LEFT JOIN patient pt ON pt.hn = ov.hn
 LEFT JOIN pttype p ON p.pttype = ov.pttype
@@ -1337,7 +1372,12 @@ SELECT ov.vstdate, ov.vsttime,
     pr.name AS priority_name,
     (SELECT MAX(ds.sign_datetime)
        FROM ovst_doctor_sign ds
-      WHERE ds.vn = ov.vn AND ds.sign_date = ov.vstdate) AS sign_datetime
+      WHERE ds.vn = ov.vn AND ds.sign_date = ov.vstdate) AS sign_datetime,
+    CASE WHEN EXISTS (
+      SELECT 1 FROM rcpt_print rpf WHERE rpf.vn = ov.vn
+    ) OR EXISTS (
+      SELECT 1 FROM rcpt_debt rdf WHERE rdf.vn = ov.vn
+    ) THEN 1 ELSE 0 END AS from_finance_dep
 FROM ovst ov
 LEFT JOIN patient pt ON pt.hn = ov.hn
 LEFT JOIN pttype p ON p.pttype = ov.pttype
@@ -1667,8 +1707,8 @@ app.post('/api/display/config', (req, res) => {
 // ─── API: Clear display queues ────────────────────────────────────────────────
 
 app.post('/api/display/clear', (req, res) => {
-  const { displayConfigId } = req.body
-  broadcast({ type: 'queue:clear', data: { displayConfigId: displayConfigId || null } })
+  const { displayConfigId, channel } = req.body
+  broadcast({ type: 'queue:clear', data: { displayConfigId: displayConfigId || null, channel: channel || null } })
 
   // Also dismiss "เรียกแล้วไม่มา" (no-show) entries from the DISPLAY only — getCallsToday()
   // keeps feeding the display's no-show panel from here, so a clear that only resets
@@ -1690,6 +1730,8 @@ app.post('/api/display/clear', (req, res) => {
     for (const key of Object.keys(calls)) {
       const c = calls[key]
       if (c.status !== 'skip' || c.clearedFromDisplay) continue
+      // ระบุช่องมาด้วย (เคลียเฉพาะช่องนั้น) — ต้องตรงกับช่องที่เรียกจริง ไม่งั้นข้ามไป
+      if (channel && c.servicePoint !== channel) continue
       // No specific display (clear all), or that display shows every department (no filter),
       // or this entry's department is one it filters to — all count as "this display's no-shows".
       if (!displayConfigId || filterDepts.length === 0 || filterDepts.includes(c.department)) {

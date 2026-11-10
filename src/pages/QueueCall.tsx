@@ -8,7 +8,7 @@ import {
 } from '../lib/api'
 import './QueueCall.css'
 
-type QueueStatus = 'waiting' | 'calling' | 'done' | 'skip'
+type QueueStatus = 'waiting' | 'calling' | 'done' | 'skip' | 'parked'
 type QueueRow = QueueItem & { status: QueueStatus }
 type QueueMode = 'slot' | 'opd' | 'cur_dep' | 'slot_cur'
 
@@ -82,7 +82,10 @@ export default function QueueCallPage() {
   const [clinicSearch, setClinicSearch] = useState('')
   const clinicMenuRef = useRef<HTMLDivElement>(null)
   const clinicSearchRef = useRef<HTMLInputElement>(null)
-  const [filterStatus, setFilterStatus] = useState<'all' | 'waiting' | 'calling' | 'done' | 'skip'>('all')
+  const [filterStatus, setFilterStatus] = useState<'all' | 'waiting' | 'calling' | 'done' | 'skip' | 'parked'>('all')
+  // เก็บคิว (พักคิวรอเรียกซ้ำ) — สำหรับกรณีเรียกคนไข้มาถามก่อน ยังไม่ได้ให้บริการจริง ต้องเก็บไว้เรียกซ้ำทีหลัง
+  // ปิดไว้เป็นค่าเริ่มต้น ต้องเข้าเมนูตั้งค่าเพื่อเปิดใช้ (เหมือน allowCrossDeptCall)
+  const [parkFeatureEnabled, setParkFeatureEnabled] = useState(() => localStorage.getItem('qc_park_feature_enabled') === 'true')
   const [currentCalled, setCurrentCalled] = useState<{ queueNo: string; servicePoint: string; calledAt?: string } | null>(null)
   const [callTimeMap, setCallTimeMap] = useState<Record<string, string>>({})
   const [clock, setClock] = useState(new Date())
@@ -101,7 +104,7 @@ export default function QueueCallPage() {
   // แสดง/ซ่อนคอลัมน์ตาราง — บางจุดบริการไม่จำเป็นต้องเห็นทุกคอลัมน์ ค่าเริ่มต้นเปิดหมดตามพฤติกรรมเดิม
   const [visibleColumns, setVisibleColumns] = useState<Record<string, boolean>>(() => {
     const defaults: Record<string, boolean> = {
-      date: true, lab: true, xray: true, med: true, supply: true, hn: true,
+      date: true, lab: true, xray: true, med: true, supply: true, finance: true, hn: true,
       name: true, insurance: true, department: true, visitType: true, status: true, calledTime: true,
     }
     try {
@@ -119,6 +122,8 @@ export default function QueueCallPage() {
   const [showChannelMenu, setShowChannelMenu] = useState(false)
   const [channelSearch, setChannelSearch] = useState('')
   const [clearMsg, setClearMsg] = useState(false)
+  // ช่องที่จะเคลีย — '' = ทุกช่องของจอที่เปิดอยู่ (พฤติกรรมเดิม), ไม่ว่างคือเคลียเฉพาะช่องนั้น
+  const [clearChannel, setClearChannel] = useState('')
   const [lockedVn, setLockedVn] = useState<string | null>(null)
   const [showShortcutHelp, setShowShortcutHelp] = useState(false)
 
@@ -209,7 +214,7 @@ export default function QueueCallPage() {
     try { localStorage.setItem('qc_board_hidden', JSON.stringify(hiddenChannels)) } catch {}
   }, [hiddenChannels])
 
-  useEffect(() => { setSelectedKeys([]); setBoardFilter('') }, [selectedDisplayId])
+  useEffect(() => { setSelectedKeys([]); setBoardFilter(''); setClearChannel('') }, [selectedDisplayId])
 
   const loadStaging = useCallback(() => { getQueueStaging().then(setStaging).catch(() => {}) }, [])
   useEffect(() => {
@@ -563,19 +568,22 @@ export default function QueueCallPage() {
   }
 
   const handleCallNext = async () => {
-    // If a row is locked (selected) and it's waiting → call that specific queue
+    // บนแท็บ "เก็บคิว" ให้เรียกซ้ำจากรายการที่พักไว้ (status 'parked') แทนคิว 'waiting' ตามปกติ —
+    // ทั้งคลิกเลือกเอง (lockedVn) และกด "เรียกถัดไป" ให้เริ่มที่คิวแรกของรายการที่พักไว้
+    const nextStatus: QueueStatus = filterStatus === 'parked' ? 'parked' : 'waiting'
+    // If a row is locked (selected) and it matches the expected status → call that specific queue
     if (lockedVn) {
-      const locked = queues.find(q => q.vn === lockedVn && q.status === 'waiting')
+      const locked = queues.find(q => q.vn === lockedVn && q.status === nextStatus)
       if (locked) {
         setLockedVn(null)
         await handleCall(locked)
         return
       }
-      // Locked row not waiting (e.g., already calling) — clear lock and fall through
+      // Locked row doesn't match (e.g., already calling) — clear lock and fall through
       setLockedVn(null)
     }
     // Use filteredQueues (already sorted by queue_no, dept-filtered) to match displayed order
-    const next = filteredQueues.find(q => q.status === 'waiting')
+    const next = filteredQueues.find(q => q.status === nextStatus)
     if (next) await handleCall(next)
   }
 
@@ -730,6 +738,17 @@ export default function QueueCallPage() {
     if (lockedVn === target.vn) setLockedVn(null)
   }
 
+  // เก็บคิว — กรณีเรียกคนไข้มาถามก่อน (เช่น ห้องยาเรียกมาถามเรื่องใบสั่งยา) ยังไม่ได้ให้บริการจริง
+  // พักไว้ในสถานะ "เก็บคิว" แยกจาก "แล้ว"/"ไม่มา" เพื่อเรียกซ้ำทีหลังได้ — ใช้เป้าหมายเดียวกับ
+  // "ยืนยันการเรียกคิว"/"เรียกไม่มา" (คลิกเลือกแถวไว้ก่อน หรือใช้คิวที่กำลังเรียกล่าสุด)
+  const handleParkQueue = async () => {
+    const target = getConfirmTarget()
+    if (!target) return
+    await handleStatusChange(target, 'parked')
+    if (lockedVn === target.vn) setLockedVn(null)
+    if (target.status === 'calling') setCurrentCalled(null)
+  }
+
   // ── Derived values ──────────────────────────────────────────────────────────
 
   const activeQueues = queues.filter(q => q.status === 'waiting' || q.status === 'calling')
@@ -860,7 +879,7 @@ export default function QueueCallPage() {
   const channelByKey = new Map<string, string>()
   for (const ch of boardChannels) for (const k of boardMap[ch] || []) channelByKey.set(k, ch)
 
-  const filteredQueues = (filterStatus === 'done' || filterStatus === 'skip' ? queues : activeQueues)
+  const filteredQueues = (filterStatus === 'done' || filterStatus === 'skip' || filterStatus === 'parked' ? queues : activeQueues)
     .filter(q => {
       const matchDept = filterDepts.length === 0 || filterDepts.includes(roomKeyOf(q))
       const matchStatus = filterStatus === 'all' ? true : q.status === filterStatus
@@ -923,15 +942,16 @@ export default function QueueCallPage() {
   const countByStatus = (s: string) => deptFilteredQueues.filter(q => q.status === s).length
 
   const statusLabel: Record<string, string> = {
-    waiting: 'รอเรียก', calling: 'กำลังเรียก', done: 'แล้ว', skip: 'ไม่มา'
+    waiting: 'รอเรียก', calling: 'กำลังเรียก', done: 'แล้ว', skip: 'ไม่มา', parked: 'เก็บคิว'
   }
   const statusClass: Record<string, string> = {
-    waiting: 'badge-waiting', calling: 'badge-calling', done: 'badge-done', skip: 'badge-skip'
+    waiting: 'badge-waiting', calling: 'badge-calling', done: 'badge-done', skip: 'badge-skip', parked: 'badge-parked'
   }
 
   const hasCallingQueue = queues.some(q => q.status === 'calling')
+  // บนแท็บ "เก็บคิว" ปุ่ม "เรียกถัดไป" ต้องเช็คจากรายการที่พักไว้แทน ไม่งั้นปุ่มจะกดไม่ได้ทั้งที่มีคิวให้เรียกซ้ำ
   const hasWaitingQueue = queues.some(q =>
-    q.status === 'waiting' &&
+    q.status === (filterStatus === 'parked' ? 'parked' : 'waiting') &&
     (filterDepts.length === 0 || filterDepts.includes(roomKeyOf(q))) &&
     (visitFilter === 'all' || q.visit_type === visitFilter) &&
     (visitFilter !== 'appt' || selectedDoctors.length === 0 || (!!q.doctor_name && selectedDoctors.includes(q.doctor_name))) &&
@@ -1133,17 +1153,31 @@ export default function QueueCallPage() {
             )}
           </div>
 
-          {/* ── ปุ่มเคลียคิวจอแสดง ── */}
+          {/* ── ปุ่มเคลียคิวจอแสดง — เลือกเคลียเฉพาะช่องของจอที่เปิดอยู่ได้ด้วย ── */}
+          {selectedDisplay && displayChannels.length > 0 && (
+            <select
+              className="qc-clear-channel-select"
+              value={clearChannel}
+              onChange={e => setClearChannel(e.target.value)}
+              title="เลือกช่องที่จะเคลีย — ไม่เลือกคือเคลียทั้งจอ"
+            >
+              <option value="">ทุกช่องของจอนี้</option>
+              {displayChannels.map(ch => <option key={ch} value={ch}>{ch}</option>)}
+            </select>
+          )}
           <button
             className={`qc-clear-display-btn${clearMsg ? ' ok' : ''}`}
-            title={selectedDisplay ? `เคลียคิวทั้งหมดบนจอ "${selectedDisplay.name}"` : 'เคลียคิวทุกจอแสดงผล'}
+            title={
+              clearChannel ? `เคลียคิวเฉพาะช่อง "${clearChannel}"`
+                : selectedDisplay ? `เคลียคิวทั้งหมดบนจอ "${selectedDisplay.name}"` : 'เคลียคิวทุกจอแสดงผล'
+            }
             onClick={async () => {
-              await clearDisplayQueues(selectedDisplayId || undefined)
+              await clearDisplayQueues(selectedDisplayId || undefined, clearChannel || undefined)
               setClearMsg(true)
               setTimeout(() => setClearMsg(false), 1800)
             }}
           >
-            {clearMsg ? '✓ เคลียแล้ว' : (selectedDisplay ? `🗑 เคลียคิว "${selectedDisplay.name}"` : '🗑 เคลียทุกจอ')}
+            {clearMsg ? '✓ เคลียแล้ว' : clearChannel ? `🗑 เคลีย "${clearChannel}"` : (selectedDisplay ? `🗑 เคลียคิว "${selectedDisplay.name}"` : '🗑 เคลียทุกจอ')}
           </button>
 
           {/* ── บอร์ดเตรียมคิว ── */}
@@ -1308,6 +1342,15 @@ export default function QueueCallPage() {
                     }} />
                   อนุญาตเรียกคิวข้ามห้องตรวจ (ช่อง Q / HN)
                 </label>
+                <label className="qc-sd-checkbox">
+                  <input type="checkbox" checked={parkFeatureEnabled}
+                    onChange={e => {
+                      setParkFeatureEnabled(e.target.checked)
+                      localStorage.setItem('qc_park_feature_enabled', String(e.target.checked))
+                      if (!e.target.checked && filterStatus === 'parked') setFilterStatus('all')
+                    }} />
+                  เปิดใช้งานเก็บคิว (พักคิวรอเรียกซ้ำ)
+                </label>
                 <div className="qc-sd-divider" />
                 <button type="button" className="qc-sd-section-label qc-sd-section-toggle"
                   onClick={() => setShowColumnMenu(v => !v)}>
@@ -1324,6 +1367,7 @@ export default function QueueCallPage() {
                   ['xray', 'X-ray'],
                   ['med', 'ยา'],
                   ['supply', 'เวชภัณฑ์'],
+                  ['finance', 'การเงิน'],
                   ['hn', 'HN'],
                   ['name', 'ชื่อ'],
                   ['insurance', 'สิทธิการรักษา'],
@@ -1367,7 +1411,7 @@ export default function QueueCallPage() {
               ? <span className="qc-btn-spinner" />
               : <span className="qc-btn-icon">▶</span>}
             {(() => {
-              const locked = lockedVn ? queues.find(q => q.vn === lockedVn && q.status === 'waiting') : null
+              const locked = lockedVn ? queues.find(q => q.vn === lockedVn && q.status === (filterStatus === 'parked' ? 'parked' : 'waiting')) : null
               return locked ? `เรียก · ${locked.queue_slot ?? locked.queue_no ?? '?'}` : 'เรียกคิวถัดไป'
             })()}
             <span className="qc-kbd">F2</span>
@@ -1400,6 +1444,18 @@ export default function QueueCallPage() {
               : 'เรียกไม่มา'}
             <span className="qc-kbd">F4</span>
           </button>
+
+          {parkFeatureEnabled && (
+            <button className="qc-btn-action qc-btn-park" onClick={handleParkQueue}
+              disabled={!getConfirmTarget() || !!callingId}
+              title="เรียกมาถามก่อน ยังไม่ได้ให้บริการจริง — พักคิวไว้เรียกซ้ำทีหลัง">
+              <span className="qc-btn-icon">📥</span>
+              {(() => {
+                const target = getConfirmTarget()
+                return target ? `เก็บคิว · ${target.queue_slot ?? target.queue_no ?? '?'}` : 'เก็บคิว'
+              })()}
+            </button>
+          )}
 
           <div className="qc-manual-card">
             <div className="qc-manual-label">
@@ -1780,7 +1836,7 @@ export default function QueueCallPage() {
             </div>
             </div>
             <div className="qc-filter-tabs">
-              {(['all', 'waiting', 'calling', 'done', 'skip'] as const).map(s => (
+              {(['all', 'waiting', 'calling', 'done', 'skip', ...(parkFeatureEnabled ? ['parked'] as const : [])] as const).map(s => (
                 <button key={s} className={`qc-tab ${filterStatus === s ? 'active' : ''}`} onClick={() => setFilterStatus(s)}>
                   {s === 'all' ? `ทั้งหมด (${deptFilteredQueues.length})` : `${statusLabel[s]} (${countByStatus(s)})`}
                 </button>
@@ -1857,6 +1913,7 @@ export default function QueueCallPage() {
                   {visibleColumns.xray && <th className="qc-th-lab">X-ray</th>}
                   {visibleColumns.med && <th className="qc-th-lab">ยา</th>}
                   {visibleColumns.supply && <th className="qc-th-lab">เวชภัณฑ์</th>}
+                  {visibleColumns.finance && <th className="qc-th-lab">การเงิน</th>}
                   {(mode === 'slot' || mode === 'slot_cur') && <th>Queue Dep</th>}
                   <th>{(mode === 'slot' || mode === 'slot_cur') ? 'oqueue' : 'คิว'}</th>
                   {visibleColumns.hn && <th>HN</th>}
@@ -1889,10 +1946,10 @@ export default function QueueCallPage() {
                 <tbody>
                   {filteredQueues.map((q, i) => (
                     <tr key={`${q.vn}-${i}`}
-                      className={`qc-tr ${q.status === 'calling' ? 'qc-tr-calling' : ''} ${q.status === 'done' ? 'qc-tr-done' : ''} ${lockedVn === q.vn ? 'qc-tr-locked' : ''} ${(q.status === 'waiting' || q.status === 'calling') ? 'qc-tr-selectable' : ''}`}
+                      className={`qc-tr ${q.status === 'calling' ? 'qc-tr-calling' : ''} ${q.status === 'done' ? 'qc-tr-done' : ''} ${q.status === 'parked' ? 'qc-tr-parked' : ''} ${lockedVn === q.vn ? 'qc-tr-locked' : ''} ${(q.status === 'waiting' || q.status === 'calling' || q.status === 'parked') ? 'qc-tr-selectable' : ''}`}
                       onClick={e => {
                         if ((e.target as HTMLElement).closest('button')) return
-                        if (q.status === 'waiting' || q.status === 'calling') {
+                        if (q.status === 'waiting' || q.status === 'calling' || q.status === 'parked') {
                           setLockedVn(prev => prev === q.vn ? null : q.vn)
                         }
                       }}>
@@ -1981,6 +2038,14 @@ export default function QueueCallPage() {
                           )
                         })()}
                       </td>}
+                      {visibleColumns.finance && <td className="qc-td-lab">
+                        {q.from_finance_dep ? (
+                          <span className="lab-icon finance-icon" title="มีรายการการเงิน (ใบเสร็จ/ค้างชำระ)">
+                            <svg width="16" height="16" viewBox="0 0 24 24" fill="none"><rect x="2" y="6" width="20" height="12" rx="2" stroke="currentColor" strokeWidth="1.8"/><circle cx="12" cy="12" r="3" stroke="currentColor" strokeWidth="1.8"/><line x1="5.5" y1="9" x2="5.5" y2="9.01" stroke="currentColor" strokeWidth="2.4" strokeLinecap="round"/><line x1="18.5" y1="15" x2="18.5" y2="15.01" stroke="currentColor" strokeWidth="2.4" strokeLinecap="round"/></svg>
+                            <span className="lab-icon-label">การเงิน</span>
+                          </span>
+                        ) : null}
+                      </td>}
                       {(mode === 'slot' || mode === 'slot_cur') && <td className="qc-td-center"><span className="qc-slot-pill">{q.queue_slot ?? '—'}</span></td>}
                       <td className="qc-td-center"><span className="qc-qno-pill">{q.queue_no || '—'}</span></td>
                       {visibleColumns.hn && (() => {
@@ -2036,7 +2101,7 @@ export default function QueueCallPage() {
                             <button className="btn btn-success qc-done-btn" onClick={() => handleStatusChange(q, 'done')}>✓</button>
                           </div>
                         )}
-                        {(q.status === 'skip' || q.status === 'done') && (
+                        {(q.status === 'skip' || q.status === 'done' || q.status === 'parked') && (
                           <button className="btn btn-accent qc-recall-btn" onClick={() => handleCall(q)} disabled={!!callingId}
                             title="เรียกคิวซ้ำ">
                             {callingId === q.vn ? <span className="spinner" /> : '↻'} เรียกซ้ำ

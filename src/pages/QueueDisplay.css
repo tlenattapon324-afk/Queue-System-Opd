@@ -103,6 +103,10 @@
 }
 /* บอร์ดเรียกคิว: เว้นช่องไฟระหว่างส่วนที่ 2 (ช่องบริการ) กับส่วนที่ 3 (เรียกแล้วไม่มา) */
 .qd-body-callboard { gap: 14px; padding: 10px; }
+/* จอแนวตั้ง: [คิวที่กำลังเรียก] [คิวที่รอเรียก] [เรียกแล้วไม่มา] เรียงจากซ้ายไปขวา */
+/* ไม่ใส่ gap — .qd-vt-resizer ระหว่างคิวที่รอเรียก/เรียกแล้วไม่มาเว้นช่องไฟเองอยู่แล้ว (ใส่ gap ซ้ำ
+   จะกลายเป็นช่องว่างกว้างเกิน) ส่วนก่อนคิวที่รอเรียกเว้นด้วย margin-left ของ .qd-vt-waiting แทน */
+.qd-body-vertical { flex-direction: row; }
 
 /* ─── Main table area ────────────────────────────────────────── */
 .qd-main {
@@ -422,6 +426,202 @@
 .qd-cb-upcoming-dept { font-size: 11px; opacity: 0.65; white-space: nowrap; overflow: hidden; text-overflow: ellipsis; max-width: 120px; }
 .qd-cb-upcoming-empty { font-size: 14px; opacity: 0.5; padding: 0 14px; }
 
+/* ─── Vertical layout (จอแนวตั้ง) ────────────────────────────────
+   [1][2] กล่องช่องบริการ (คอลัมน์ละ 1 ช่อง ตาม "การจัดเรียงคอลัมน์") แต่ละช่องค้างแสดงคิวที่เรียก
+   ล่าสุดได้หลายคิว (S001 S002 S003...) | [3] คิวที่รอเรียก | [4] เรียกแล้วไม่มา — เรียงซ้ายไปขวา
+   ([3]/[4] ใช้คลาส .qd-right / .qd-noshow-* ร่วมกับพาเนลเดิม ให้หน้าตาเหมือนกันตามที่ขอ)
+──────────────────────────────────────────────────────────────── */
+.qd-vt-wrap {
+  flex: 1;
+  display: flex;
+  flex-direction: column;
+  min-width: 0;
+  min-height: 0;
+  overflow: hidden;
+}
+.qd-vt-called-section {
+  /* ไม่ใส่ gap — ตัว .qd-vt-resizer เองเป็นตัวเว้นช่องไฟระหว่างคอลัมน์อยู่แล้ว (ใส่ gap ซ้ำ
+     จะกลายเป็นช่องว่างกว้างเกิน: gap + ตัว resizer + gap) */
+  flex: 1;
+  display: flex;
+  flex-direction: row;
+  padding: 4px;
+  min-width: 0;
+  min-height: 0;
+}
+.qd-vt-called-col {
+  /* เหตุผลเดียวกับ .qd-vt-called-section — .qd-vt-resizer-h เว้นช่องไฟระหว่างแถวอยู่แล้ว */
+  flex: 1;
+  display: flex;
+  flex-direction: column;
+  min-width: 0;
+  min-height: 0;
+}
+.qd-vt-called-channel {
+  flex: 1;
+  display: flex;
+  flex-direction: column;
+  min-height: 0;
+  border-radius: 10px;
+  overflow: hidden;
+}
+.qd-vt-called-channel-hd {
+  flex-shrink: 0;
+  display: flex;
+  align-items: center;
+  justify-content: center;
+  padding: 2px 10px;
+  font-weight: 700;
+  text-align: center;
+  overflow: hidden;
+}
+/* เรียงคิวที่เรียกซ้ายไปขวาตามลำดับที่เรียก — ตัดขึ้นบรรทัดถัดไปเมื่อพื้นที่ชนขอบ (ไม่ใช้เลื่อนแนวนอน) */
+.qd-vt-called-grid {
+  flex: 1;
+  display: flex;
+  flex-wrap: wrap;
+  align-content: flex-start;
+  /* ค่าเริ่มต้น: ชิดขอบบน-ซ้าย (toggle "จัดกึ่งกลาง" จะ override เป็น center ผ่าน inline style) */
+  align-items: flex-start;
+  justify-content: flex-start;
+  gap: 10px;
+  padding: 12px;
+  overflow-y: auto;
+  overflow-x: hidden;
+}
+.qd-vt-called-grid::-webkit-scrollbar { width: 6px; }
+.qd-vt-called-grid::-webkit-scrollbar-thumb { background: rgba(0,0,0,0.2); border-radius: 4px; }
+.qd-vt-called-chip {
+  flex: 0 0 auto;
+  display: flex;
+  align-items: center;
+  justify-content: center;
+  padding: 10px 16px;
+  border-radius: 10px;
+  font-weight: 900;
+  line-height: 1;
+}
+.qd-vt-called-chip.latest { box-shadow: 0 0 0 4px rgba(21,101,192,0.25); }
+.qd-vt-called-empty {
+  flex: 1;
+  display: flex;
+  align-items: center;
+  justify-content: center;
+  min-height: 120px;
+}
+
+/* "เรียกแล้วไม่มา" แยกต่อช่อง — อยู่ท้ายกล่องช่องบริการแต่ละช่องเอง (ไม่ใช่พาเนลรวมด้านข้าง) */
+.qd-vt-ch-noshow {
+  flex-shrink: 0;
+  display: flex;
+  flex-direction: column;
+  overflow: hidden;
+}
+.qd-vt-ch-noshow-hd {
+  flex-shrink: 0;
+  display: flex;
+  align-items: center;
+  justify-content: center;
+  gap: 6px;
+  padding: 0 10px;
+  font-weight: 700;
+  overflow: hidden;
+}
+/* เรียงเป็นแถวแนวนอนแถวเดียว ซ้ายไปขวา เหมือนคิวที่เรียก — ล้นกว้างให้เลื่อนแนวนอนแทนการตัดบรรทัด */
+.qd-vt-ch-noshow-body {
+  flex: 1;
+  display: flex;
+  flex-direction: row;
+  flex-wrap: nowrap;
+  align-items: center;
+  gap: 10px;
+  padding: 2px 8px;
+  overflow: hidden;
+}
+.qd-vt-ch-noshow-item {
+  flex: 0 0 auto;
+  display: flex;
+  flex-direction: column;
+  align-items: center;
+  gap: 2px;
+  padding: 2px 6px;
+}
+
+/* เลื่อนอัตโนมัติแนวนอนเมื่อรายการเกินจำนวนที่ตั้งไว้ — render ชุดเดียวกันซ้ำ 2 ชุดต่อกัน แล้วเลื่อน
+   translateX จาก 0 ไป -50% (จุดที่ชุดที่ 2 มาอยู่ตำแหน่งเริ่มต้นของชุดที่ 1 พอดี) ให้วนลูปไม่มีรอยต่อ */
+.qd-vt-ch-noshow-scroll-track {
+  display: flex;
+  flex-wrap: nowrap;
+  animation: qd-ch-noshow-scroll linear infinite;
+}
+.qd-vt-ch-noshow-scroll-group {
+  display: flex;
+  flex-wrap: nowrap;
+  gap: 10px;
+  padding-right: 10px;
+}
+@keyframes qd-ch-noshow-scroll {
+  0%   { transform: translateX(0); }
+  100% { transform: translateX(-50%); }
+}
+.qd-vt-ch-noshow-item span:first-child { font-weight: 900; line-height: 1; }
+.qd-vt-ch-noshow-time {
+  font-size: 11px;
+  color: rgba(255,255,255,0.45);
+  white-space: nowrap;
+}
+.qd-vt-ch-noshow-empty {
+  flex: 1;
+  display: flex;
+  align-items: center;
+  justify-content: center;
+  font-size: 12px;
+  color: rgba(255,255,255,0.25);
+}
+
+/* รายการคิวที่รอเรียก — คอลัมน์ทางขวา (กว้างเท่าแผงเรียกแล้วไม่มา) */
+.qd-vt-waiting {
+  min-height: 0;
+  margin-left: 6px;
+}
+/* กรณีซ่อน "คิวที่รอเรียก" ไว้ — เรียกแล้วไม่มาจะต่อจากคิวที่กำลังเรียกโดยตรง (ไม่มี resizer คั่น) ต้องเว้นช่องไฟเอง */
+.qd-vt-wrap + .qd-right { margin-left: 6px; }
+
+/* เส้นลากปรับความกว้างคอลัมน์/พาเนลของจอแนวตั้ง — คั่นระหว่างแต่ละคอลัมน์/พาเนล เป็น flex item จริง
+   (ไม่ใช่ overlay ลอย) จึงใช้ previousElementSibling หา element ที่กำลังปรับขนาดได้ตรงๆ */
+.qd-vt-resizer {
+  flex: 0 0 8px;
+  cursor: col-resize;
+  background: transparent;
+  position: relative;
+}
+.qd-vt-resizer::after {
+  content: '';
+  position: absolute;
+  top: 10%; bottom: 10%; left: 3px; right: 3px;
+  border-radius: 2px;
+  background: rgba(255,255,255,0.12);
+  transition: background 0.15s;
+}
+.qd-vt-resizer:hover::after { background: rgba(255,255,255,0.4); }
+
+/* เส้นลากปรับความสูง — คั่นระหว่างกล่องช่องบริการที่ซ้อนกันในคอลัมน์เดียวกัน */
+.qd-vt-resizer-h {
+  flex: 0 0 8px;
+  cursor: row-resize;
+  background: transparent;
+  position: relative;
+}
+.qd-vt-resizer-h::after {
+  content: '';
+  position: absolute;
+  left: 10%; right: 10%; top: 3px; bottom: 3px;
+  border-radius: 2px;
+  background: rgba(255,255,255,0.12);
+  transition: background 0.15s;
+}
+.qd-vt-resizer-h:hover::after { background: rgba(255,255,255,0.4); }
+
 /* ส่วนที่ 2: ช่องบริการ — หัวคอลัมน์ + แต่ละแถวแยกกล่อง "ช่อง" กับ "คิว" เป็นสี่เหลี่ยมขอบมน เว้นช่องไฟ ~2mm
    รองรับหลายคอลัมน์ (config.numColumns) เมื่อจำนวนช่องมากเกินจะได้ไม่ต้องเลื่อนสกอลยาวๆ ในคอลัมน์เดียว */
 .qd-cb2-multi {
@@ -640,6 +840,29 @@
   margin-top: 4px;
   text-align: center;
 }
+/* ช่องบริการที่เรียก — เน้นให้เห็นชัดเจน (ไม่ใช่ตัวหนังสือจางๆ) เพื่อให้คนไข้รู้ว่าต้องไปติดต่อช่องไหน */
+.qd-noshow-meta {
+  display: flex;
+  flex-direction: column;
+  align-items: center;
+  gap: 4px;
+  margin-top: 6px;
+}
+.qd-noshow-sp-badge {
+  display: inline-flex;
+  align-items: center;
+  justify-content: center;
+  padding: 4px 14px;
+  border-radius: 999px;
+  background: rgba(255,255,255,0.18);
+  color: #fff;
+  font-size: 13px;
+  font-weight: 700;
+}
+.qd-noshow-time {
+  font-size: 11px;
+  color: rgba(255,255,255,0.45);
+}
 
 /* ─── Footer ──────────────────────────────────────────────────── */
 .qd-footer {
@@ -773,6 +996,19 @@
   flex-wrap: nowrap;
   min-height: 38px;
   padding: 2px 0;
+}
+.qd-sp-noshow-toggle-list {
+  display: flex;
+  flex-direction: column;
+  gap: 6px;
+  width: 100%;
+}
+.qd-sp-noshow-toggle-item {
+  display: flex;
+  align-items: center;
+  gap: 8px;
+  font-size: 13px;
+  color: rgba(255,255,255,0.85);
 }
 .qd-sp-row > * + * { margin-left: 6px; }
 .qd-sp-sys-name {

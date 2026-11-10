@@ -28,6 +28,9 @@ interface QueueItem {
   ost_name?: string | null
   priority_id?: string | null
   priority_name?: string | null
+  // true เมื่อ VN นี้มีแถวอยู่ในตาราง rcpt_print หรือ rcpt_debt (มีรายการใบเสร็จ/ค้างชำระ)
+  // — ใช้แสดงสัญลักษณ์สถานะการเงินที่หน้าเรียกคิว
+  from_finance_dep?: boolean | number | null
   vstdate: string
   vsttime: string
   sign_datetime?: string | null

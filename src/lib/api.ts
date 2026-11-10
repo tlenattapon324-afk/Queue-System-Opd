@@ -342,12 +342,12 @@ export function onQueueAudio(
   return () => _audioListeners.delete(cb)
 }
 
-export async function clearDisplayQueues(displayConfigId?: string): Promise<{ success: boolean }> {
-  return fetchJSON('/display/clear', { method: 'POST', body: JSON.stringify({ displayConfigId: displayConfigId || null }) })
+export async function clearDisplayQueues(displayConfigId?: string, channel?: string): Promise<{ success: boolean }> {
+  return fetchJSON('/display/clear', { method: 'POST', body: JSON.stringify({ displayConfigId: displayConfigId || null, channel: channel || null }) })
 }
 
 export function onQueueClear(
-  cb: (data: { displayConfigId: string | null }) => void
+  cb: (data: { displayConfigId: string | null; channel?: string | null }) => void
 ): () => void {
   if (typeof window !== 'undefined') getWS()
   _clearListeners.add(cb)
