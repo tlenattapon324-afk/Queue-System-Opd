@@ -1745,6 +1745,22 @@ app.post('/api/display/clear', (req, res) => {
   res.json({ success: true })
 })
 
+// ─── API: Live ห้องตรวจ/โหมด filter sync (เรียกคิว → จอแสดงคิวแนวตั้ง) ───────────
+// หน้าเรียกคิวรายงานโหมด+ตัวกรองห้องตรวจที่กำลังดูอยู่ ให้จอแสดงคิว (เฉพาะเลย์เอาต์แนวตั้ง) ใช้
+// แทนค่าที่ตั้งไว้แบบ static ในหน้าตั้งค่าจอ — ทำให้ "กำลังจัดยา"/คิวที่รอเรียก ตรงกับที่กรองอยู่จริง
+app.post('/api/display/filter-sync', (req, res) => {
+  const { displayConfigId, mode, filterDepts } = req.body
+  broadcast({
+    type: 'queue:filterSync',
+    data: {
+      displayConfigId: displayConfigId || null,
+      mode: mode || null,
+      filterDepts: Array.isArray(filterDepts) ? filterDepts : []
+    }
+  })
+  res.json({ success: true })
+})
+
 // ─── QD default config (persisted system default) ────────────────────────────
 
 const QD_DEFAULT_FILE = path.join(DATA_DIR, 'qd-default-config.json')

@@ -1,8 +1,8 @@
 import { useState, useEffect, useRef } from 'react'
 import {
-  onDisplayConfig, onQueueCalled, onQueueStatusChanged, onQueueAudio, onQueueClear, updateDisplayConfig,
+  onDisplayConfig, onQueueCalled, onQueueStatusChanged, onQueueAudio, onQueueClear, onQueueFilterSync, updateDisplayConfig,
   getSystemFonts, getServicePoints, getCallsToday, getQueueList,
-  getQDDefaultConfig, saveQDDefaultConfig, getTTSVoices, getDisplayConfigById,
+  getQDDefaultConfig, saveQDDefaultConfig, getTTSVoices, getDisplayConfigById, updateDisplayConfigItem,
   getDisplayQDConfig, saveDisplayQDConfig, previewServerTTS, prewarmTTS,
   type CallEntry
 } from '../lib/api'
@@ -39,9 +39,14 @@ interface QDConfig {
   // สีพื้นหลังของคิวแต่ละใบ (chip) โดยเฉพาะ — แยกจาก vtCalledBg ซึ่งเป็นพื้นหลังรวมของกล่อง
   // เพื่อให้ตั้งสีให้ต่างจากพื้นกล่องได้ (เช่น กล่องสีฟ้า คิวแต่ละใบสีขาว)
   vtCalledChipBg: string
+  vtCalledGap: number // ระยะห่าง (px) ระหว่างคิวแต่ละใบในกล่องคิวที่กำลังเรียก
   vtCalledColor: string
   vtCalledFontSize: number
   vtCalledCenter: boolean // จัดกลุ่มคิวที่เรียกให้อยู่กึ่งกลางกล่อง แทนการชิดซ้ายบนตามปกติ
+  // ข้อความ/ขนาดตัวอักษร ที่แสดงแทนเมื่อช่องนั้นยังไม่เคยเรียกคิว (เช่น "รอเรียกคิว")
+  vtEmptyDashText: string
+  vtEmptyDashFontSize: number
+  vtEmptyDashColor: string
   // สีขอบกล่องคิวที่กำลังเรียก — แยกเป็นค่าของตัวเอง ไม่ใช้ borderColor ส่วนกลางร่วมกับเลย์เอาต์อื่น
   // เพื่อไม่ให้การปรับที่นี่กระทบตาราง/บอร์ดเรียกคิว (ตามแนวทางเดียวกับ vtNoShowXXX ที่แยกไว้แล้ว)
   vtCalledBorderColor: string
@@ -67,6 +72,10 @@ interface QDConfig {
   vtNoShowHeaderHeight: number
   vtNoShowQueueColor: string
   vtNoShowFontSize: number
+  // กรอบ/พื้นหลังของคิวแต่ละใบในรายการไม่มา — ให้แยกคิวแต่ละใบออกจากกันเป็นสัดส่วน (เหมือนคิวที่กำลังเรียก)
+  vtNoShowItemBg: string
+  vtNoShowItemBorderColor: string
+  vtNoShowItemBorderWidth: number
   vtNoShowMaxItems: number
   vtNoShowAutoScroll: boolean // เลื่อนอัตโนมัติเมื่อรายการเกิน vtNoShowMaxItems (แทนการตัดรายการเก่าทิ้ง)
   vtNoShowScrollSpeed: number
@@ -82,6 +91,8 @@ interface QDConfig {
   vtWaitingBg: string
   vtWaitingHeaderBg: string
   vtWaitingHeaderColor: string
+  vtWaitingHeaderFontSize: number // ขนาดตัวอักษรหัวข้อ "คิวที่รอเรียก" (เช่น "กำลังจัดยา")
+  vtWaitingHeaderHeight: number // ความสูงหัวข้อ "คิวที่รอเรียก"
   vtWaitingQueueColor: string
   vtWaitingFontSize: number
   vtWaitingMaxItems: number
@@ -150,6 +161,13 @@ interface QDConfig {
   footerTextColor: string
   footerFontSize: number
   footerScrollSpeed: number
+  // ข้อความกำหนดเองได้ แสดงลอยอยู่กึ่งกลางจอ (ทุกเลย์เอาต์) — ว่าง = ไม่แสดง
+  customMessageText: string
+  customMessageFontSize: number
+  customMessageColor: string
+  // สี/ขนาดตัวอักษร ของชื่อจอที่แสดงในแถบหัว (📺 ชื่อจอ) — แยกจากสีข้อความรวมของแถบหัว (headerTextColor)
+  titleFontSize: number
+  titleColor: string
   // Visibility & station config
   hiddenSPs: string[]
   displayStation: string
@@ -206,9 +224,13 @@ const DEFAULT: QDConfig = {
   vtCalledCount: 3,
   vtCalledBg: '#ffffff',
   vtCalledChipBg: '#ffffff',
+  vtCalledGap: 10,
   vtCalledColor: '#1565c0',
   vtCalledFontSize: 12,
   vtCalledCenter: false,
+  vtEmptyDashText: 'รอเรียกคิว',
+  vtEmptyDashFontSize: 3.5,
+  vtEmptyDashColor: '#dddddd',
   vtCalledBorderColor: '#bbbbbb',
   vtChannelBorderColor: '#2196f3',
   vtChannelBorderWidth: 0,
@@ -225,6 +247,9 @@ const DEFAULT: QDConfig = {
   vtNoShowHeaderHeight: 26,
   vtNoShowQueueColor: '#ff6b6b',
   vtNoShowFontSize: 3,
+  vtNoShowItemBg: '#ffffff',
+  vtNoShowItemBorderColor: '#bbbbbb',
+  vtNoShowItemBorderWidth: 2,
   vtNoShowMaxItems: 3,
   vtNoShowAutoScroll: false,
   vtNoShowScrollSpeed: 15,
@@ -236,6 +261,8 @@ const DEFAULT: QDConfig = {
   vtWaitingBg: '#0d1b2a',
   vtWaitingHeaderBg: '#1565c0',
   vtWaitingHeaderColor: '#ffffff',
+  vtWaitingHeaderFontSize: 16,
+  vtWaitingHeaderHeight: 36,
   vtWaitingQueueColor: '#64b5f6',
   vtWaitingFontSize: 6,
   vtWaitingMaxItems: 10,
@@ -296,6 +323,11 @@ const DEFAULT: QDConfig = {
   footerTextColor: '#ffffff',
   footerFontSize: 20,
   footerScrollSpeed: 30,
+  customMessageText: '',
+  customMessageFontSize: 4,
+  customMessageColor: '#ffffff',
+  titleFontSize: 22,
+  titleColor: '#ffffff',
   hiddenSPs: [],
   displayStation: '',
   filterDepts: [],
@@ -352,17 +384,31 @@ function fixConfig(merged: Record<string, unknown>): QDConfig {
   if (typeof result.upcomingCount !== 'number' || result.upcomingCount < 1) result.upcomingCount = DEFAULT.upcomingCount
   if (typeof result.vtCalledCount !== 'number' || result.vtCalledCount < 1) result.vtCalledCount = DEFAULT.vtCalledCount
   if (typeof result.vtCalledFontSize !== 'number' || result.vtCalledFontSize <= 0) result.vtCalledFontSize = DEFAULT.vtCalledFontSize
+  if (typeof result.vtEmptyDashText !== 'string' || !result.vtEmptyDashText) result.vtEmptyDashText = DEFAULT.vtEmptyDashText
+  if (typeof result.vtEmptyDashFontSize !== 'number' || result.vtEmptyDashFontSize <= 0) result.vtEmptyDashFontSize = DEFAULT.vtEmptyDashFontSize
+  if (typeof result.vtEmptyDashColor !== 'string' || !result.vtEmptyDashColor) result.vtEmptyDashColor = DEFAULT.vtEmptyDashColor
+  if (typeof result.customMessageText !== 'string') result.customMessageText = DEFAULT.customMessageText
+  if (typeof result.customMessageFontSize !== 'number' || result.customMessageFontSize <= 0) result.customMessageFontSize = DEFAULT.customMessageFontSize
+  if (typeof result.customMessageColor !== 'string' || !result.customMessageColor) result.customMessageColor = DEFAULT.customMessageColor
+  if (typeof result.titleFontSize !== 'number' || result.titleFontSize <= 0) result.titleFontSize = DEFAULT.titleFontSize
+  if (typeof result.titleColor !== 'string' || !result.titleColor) result.titleColor = DEFAULT.titleColor
   if (typeof result.vtColWidths !== 'object' || Array.isArray(result.vtColWidths)) result.vtColWidths = {}
   if (typeof result.vtRowHeights !== 'object' || Array.isArray(result.vtRowHeights)) result.vtRowHeights = {}
   if (typeof result.vtWaitingWidth !== 'number' || result.vtWaitingWidth <= 0) result.vtWaitingWidth = DEFAULT.vtWaitingWidth
   if (typeof result.vtHeaderFontSize !== 'number' || result.vtHeaderFontSize <= 0) result.vtHeaderFontSize = DEFAULT.vtHeaderFontSize
   if (typeof result.vtHeaderHeight !== 'number' || result.vtHeaderHeight <= 0) result.vtHeaderHeight = DEFAULT.vtHeaderHeight
   if (typeof result.vtCalledChipBg !== 'string' || !result.vtCalledChipBg) result.vtCalledChipBg = DEFAULT.vtCalledChipBg
+  if (typeof result.vtCalledGap !== 'number' || result.vtCalledGap < 0) result.vtCalledGap = DEFAULT.vtCalledGap
   if (typeof result.vtChannelBorderColor !== 'string' || !result.vtChannelBorderColor) result.vtChannelBorderColor = DEFAULT.vtChannelBorderColor
   if (typeof result.vtChannelBorderWidth !== 'number' || result.vtChannelBorderWidth < 0) result.vtChannelBorderWidth = DEFAULT.vtChannelBorderWidth
   if (typeof result.vtNoShowHeights !== 'object' || Array.isArray(result.vtNoShowHeights)) result.vtNoShowHeights = {}
   if (typeof result.vtNoShowDefaultHeight !== 'number' || result.vtNoShowDefaultHeight <= 0) result.vtNoShowDefaultHeight = DEFAULT.vtNoShowDefaultHeight
   if (typeof result.vtNoShowHeaderFontSize !== 'number' || result.vtNoShowHeaderFontSize <= 0) result.vtNoShowHeaderFontSize = DEFAULT.vtNoShowHeaderFontSize
+  if (typeof result.vtNoShowItemBg !== 'string' || !result.vtNoShowItemBg) result.vtNoShowItemBg = DEFAULT.vtNoShowItemBg
+  if (typeof result.vtNoShowItemBorderColor !== 'string' || !result.vtNoShowItemBorderColor) result.vtNoShowItemBorderColor = DEFAULT.vtNoShowItemBorderColor
+  if (typeof result.vtNoShowItemBorderWidth !== 'number' || result.vtNoShowItemBorderWidth < 0) result.vtNoShowItemBorderWidth = DEFAULT.vtNoShowItemBorderWidth
+  if (typeof result.vtWaitingHeaderFontSize !== 'number' || result.vtWaitingHeaderFontSize <= 0) result.vtWaitingHeaderFontSize = DEFAULT.vtWaitingHeaderFontSize
+  if (typeof result.vtWaitingHeaderHeight !== 'number' || result.vtWaitingHeaderHeight <= 0) result.vtWaitingHeaderHeight = DEFAULT.vtWaitingHeaderHeight
   if (typeof result.vtNoShowHeaderHeight !== 'number' || result.vtNoShowHeaderHeight <= 0) result.vtNoShowHeaderHeight = DEFAULT.vtNoShowHeaderHeight
   if (typeof result.vtNoShowFontSize !== 'number' || result.vtNoShowFontSize <= 0) result.vtNoShowFontSize = DEFAULT.vtNoShowFontSize
   if (typeof result.vtNoShowMaxItems !== 'number' || result.vtNoShowMaxItems < 1) result.vtNoShowMaxItems = DEFAULT.vtNoShowMaxItems
@@ -441,13 +487,29 @@ function fitQueueFontSize(text: string, baseVw: number): number {
 // now. For opd/cur_dep modes, sort by ovst.oqueue (numeric) — matching the queue-call page —
 // not by arrival time, and without grouping by department first (which is what pins a
 // department-less queue to the top forever).
+// ตัวตนของ "ห้องตรวจ" ที่ใช้กรอง — ต้องตรงกับ roomKeyOf ของหน้าเรียกคิว (QueueCall.tsx) เป๊ะๆ เพราะ
+// ในโหมด 'slot' ฟิลด์ department คือแผนกต้นสังกัด (main_dep) ของคนไข้ ไม่ใช่ห้อง/หมอที่คิวอยู่จริง —
+// ห้อง/หมอจริงคือ slot_doctor_name (มีก็ใช้ก่อน) มิฉะนั้นจะกรองผิดห้อง (ติดคิวแผนกอื่นที่ส่งต่อมา)
+function roomKeyOf(mode: QDConfig['upcomingQueueMode'], q: QueueItem): string {
+  return mode === 'slot' ? (q.slot_doctor_name || q.department || '') : (q.department || '')
+}
+
 function computeUpcomingQueues(cfg: QDConfig, data: QueueItem[], lastCalledDept: string | undefined): QueueItem[] {
-  const scopeDepts = cfg.filterDepts.length > 0 ? cfg.filterDepts : (lastCalledDept ? [lastCalledDept] : [])
+  // เลย์เอาต์แนวตั้ง: เคารพ filterDepts ตรงๆ เท่านั้น (ว่าง = ทุกห้องตรวจ) ไม่ auto-scope ตามแผนกที่
+  // เพิ่งเรียกล่าสุด — ต่างจากคอลัมน์/บอร์ดเรียกคิวซึ่งมักมีช่องเดียวจึงอิงแผนกล่าสุดได้ แต่จอแนวตั้ง
+  // มีหลายช่องพร้อมกัน การ auto-scope ตามช่องที่เพิ่งเรียกจะทำให้รายการรอเรียกกระโดดไปมาไม่นิ่ง
+  const scopeDepts = cfg.filterDepts.length > 0
+    ? cfg.filterDepts
+    : (cfg.layout === 'vertical' ? [] : (lastCalledDept ? [lastCalledDept] : []))
   const list = data
     .filter(q => q.status === 'waiting' || !q.status)
     // Once a room scope is active (explicit or auto from the last call), a queue with no
-    // department at all doesn't belong to it — don't let it slip through as an exception.
-    .filter(q => scopeDepts.length === 0 || (!!q.department && scopeDepts.includes(q.department)))
+    // room identity at all doesn't belong to it — don't let it slip through as an exception.
+    .filter(q => {
+      if (scopeDepts.length === 0) return true
+      const key = roomKeyOf(cfg.upcomingQueueMode, q)
+      return !!key && scopeDepts.includes(key)
+    })
   if (cfg.upcomingQueueMode === 'opd' || cfg.upcomingQueueMode === 'cur_dep') {
     list.sort((a, b) => {
       const na = Number(a.queue_no), nb = Number(b.queue_no)
@@ -485,6 +547,11 @@ export default function QueueDisplayPage() {
   const [lastCalled, setLastCalled] = useState<{ sp: string; queueNo: string; queueName: string; department?: string; animKey: number } | null>(null)
   const lastCalledRef = useRef(lastCalled)
   useEffect(() => { lastCalledRef.current = lastCalled }, [lastCalled])
+  // เลย์เอาต์แนวตั้ง: โหมด+ห้องตรวจที่หน้าเรียกคิว (ของจอนี้) กำลังกรองอยู่จริง ใช้แทนค่า static
+  // (upcomingQueueMode/filterDepts) ที่ตั้งไว้ในหน้าตั้งค่าจอ เมื่อมีหน้าเรียกคิวรายงานเข้ามา
+  const [liveFilter, setLiveFilter] = useState<{ mode: string; filterDepts: string[] } | null>(null)
+  const liveFilterRef = useRef(liveFilter)
+  useEffect(() => { liveFilterRef.current = liveFilter }, [liveFilter])
   // Vertical layout: ประวัติคิวที่เรียกล่าสุด แยกเก็บ "ต่อช่องบริการ" (ใหม่สุดอยู่หน้า) — แต่ละช่อง
   // ค้างแสดงได้หลายคิวพร้อมกัน (vtCalledCount) เผื่อผู้ใช้ปรับจำนวนที่แสดงเพิ่มทีหลังจึงเก็บ buffer เกินไว้
   const [calledHistoryBySp, setCalledHistoryBySp] = useState<Record<string, Array<{ queueNo: string; queueName: string; animKey: number }>>>({})
@@ -687,9 +754,13 @@ export default function QueueDisplayPage() {
         getQueueList(cfg.upcomingQueueMode).catch(() => ({ success: false, data: [] }))
       ])
       setNoShowQueues(calls.filter((c: CallEntry) => c.status === 'skip' && !c.clearedFromDisplay))
+      // จอแนวตั้ง + มีหน้าเรียกคิวรายงานตัวกรองสดเข้ามา (ห้องตรวจ/โหมดที่กำลังกรองอยู่จริง) — ใช้ค่านั้น
+      // แทน static upcomingQueueMode/filterDepts เฉพาะ "คิวที่รอเรียก" เท่านั้น ไม่กระทบ availDepts/
+      // การจับคู่ชื่อคิวด้านล่างซึ่งยังอิงโหมดที่ตั้งไว้ในหน้าตั้งค่าจอตามเดิม
+      const liveFilterNow = cfg.layout === 'vertical' ? liveFilterRef.current : null
       if (queueRes.success) {
         const waitingAll = computeUpcomingQueues(cfg, queueRes.data, lastCalledRef.current?.department)
-        setWaitingQueues(waitingAll)
+        if (!liveFilterNow) setWaitingQueues(waitingAll)
         // Prewarm Edge TTS for upcoming queues × visible channels — eliminates delay on first call
         if (cfg.ttsEnabled && cfg.ttsSource === 'server') {
           const waiting = waitingAll
@@ -704,7 +775,7 @@ export default function QueueDisplayPage() {
             prewarmTTS(waiting, spList, cfg.displayConfigId || '')
           }
         }
-        const depts = Array.from(new Set(queueRes.data.map((q: QueueItem) => q.department).filter(Boolean))).sort() as string[]
+        const depts = Array.from(new Set(queueRes.data.map((q: QueueItem) => roomKeyOf(cfg.upcomingQueueMode, q)).filter(Boolean))).sort() as string[]
         setAvailDepts(depts)
         // อัพเดตชื่อโดยใช้ spQueues เป็น reference (match queueNo → name)
         // เพื่อป้องกันชื่อเก่า/ผิดช่องมาทับ
@@ -721,6 +792,13 @@ export default function QueueDisplayPage() {
             setSpNames(names => ({ ...names, ...nameMap }))
           return prev
         })
+      }
+      if (liveFilterNow) {
+        getQueueList(liveFilterNow.mode as QDConfig['upcomingQueueMode']).then(r2 => {
+          if (!r2.success) return
+          const liveCfg = { ...cfg, upcomingQueueMode: liveFilterNow.mode as QDConfig['upcomingQueueMode'], filterDepts: liveFilterNow.filterDepts }
+          setWaitingQueues(computeUpcomingQueues(liveCfg, r2.data, lastCalledRef.current?.department))
+        }).catch(() => {})
       }
     }
     refresh()
@@ -827,9 +905,12 @@ export default function QueueDisplayPage() {
       }
       setTimeout(() => {
         getCallsToday().then(c => setNoShowQueues(c.filter((x: CallEntry) => x.status === 'skip' && !x.clearedFromDisplay)))
-        getQueueList(cfg.upcomingQueueMode).then(r => {
+        const liveFilterNow = cfg.layout === 'vertical' ? liveFilterRef.current : null
+        const waitMode = liveFilterNow ? liveFilterNow.mode as QDConfig['upcomingQueueMode'] : cfg.upcomingQueueMode
+        getQueueList(waitMode).then(r => {
           if (!r.success) return
-          setWaitingQueues(computeUpcomingQueues(cfg, r.data, lastCalledRef.current?.department))
+          const waitCfg = liveFilterNow ? { ...cfg, upcomingQueueMode: waitMode, filterDepts: liveFilterNow.filterDepts } : cfg
+          setWaitingQueues(computeUpcomingQueues(waitCfg, r.data, lastCalledRef.current?.department))
         }).catch(() => {})
       }, 800)
     })
@@ -1085,6 +1166,24 @@ export default function QueueDisplayPage() {
     return off
   }, []) // eslint-disable-line react-hooks/exhaustive-deps
 
+  // queue:filterSync — หน้าเรียกคิว (ของจอนี้) รายงานโหมด+ห้องตรวจที่กำลังกรองอยู่จริง ใช้แทน
+  // static upcomingQueueMode/filterDepts เฉพาะ "คิวที่รอเรียก" ของเลย์เอาต์แนวตั้งเท่านั้น
+  useEffect(() => {
+    const off = onQueueFilterSync(data => {
+      const cfg = configRef.current
+      if (!data.displayConfigId || !cfg.displayConfigId || data.displayConfigId !== cfg.displayConfigId) return
+      if (!data.mode) return
+      setLiveFilter({ mode: data.mode, filterDepts: data.filterDepts })
+      if (cfg.layout !== 'vertical') return
+      getQueueList(data.mode as QDConfig['upcomingQueueMode']).then(r => {
+        if (!r.success) return
+        const liveCfg = { ...cfg, upcomingQueueMode: data.mode as QDConfig['upcomingQueueMode'], filterDepts: data.filterDepts }
+        setWaitingQueues(computeUpcomingQueues(liveCfg, r.data, lastCalledRef.current?.department))
+      }).catch(() => {})
+    })
+    return off
+  }, []) // eslint-disable-line react-hooks/exhaustive-deps
+
   const playBeep = () => {
     try {
       if (!audioCtx.current) audioCtx.current = new AudioContext()
@@ -1237,6 +1336,16 @@ export default function QueueDisplayPage() {
     setShowSettings(true)
     setPanelOffset({ x: 0, y: 0 })
     getSystemFonts().then(setSystemFonts)
+  }
+
+  // แก้ชื่อจอ — ต้องอัปเดตที่ "จัดการหน้าจอแสดงคิว" (DisplayConfigItem.name) ด้วย ไม่ใช่แค่ local config
+  // เพราะมี effect โพลทุก 15s ที่ดึงชื่อจากตรงนั้นมาทับ config.displayConfigName (บรรทัด ~733) อยู่แล้ว
+  const renameDisplay = async (newName: string) => {
+    if (!URL_DISPLAY_ID) return
+    setConfig(c => ({ ...c, displayConfigName: newName }))
+    const dcfg = await getDisplayConfigById(URL_DISPLAY_ID)
+    if (!dcfg) return
+    await updateDisplayConfigItem(URL_DISPLAY_ID, { ...dcfg, name: newName })
   }
 
   const saveConfig = async () => {
@@ -1646,10 +1755,11 @@ export default function QueueDisplayPage() {
                     </div>
                     <div className="qd-vt-called-grid" style={{
                       background: config.vtCalledBg,
-                      ...(config.vtCalledCenter ? { justifyContent: 'center', alignContent: 'center', alignItems: 'center' } : {})
+                      gap: config.vtCalledGap,
+                      ...((config.vtCalledCenter || history.length === 0) ? { justifyContent: 'center', alignContent: 'center', alignItems: 'center' } : {})
                     }}>
                       {history.length === 0 ? (
-                        <span className="qd-dash qd-cb-dash">รอเรียกคิว</span>
+                        <span className="qd-dash qd-cb-dash" style={{ fontSize: `${config.vtEmptyDashFontSize}vw`, color: config.vtEmptyDashColor }}>{config.vtEmptyDashText}</span>
                       ) : (() => {
                         // เรียงซ้าย→ขวาตามลำดับที่เรียกจริง (เก่าสุดซ้าย ล่าสุดขวา) — history เก็บล่าสุด
                         // ไว้หน้าสุด (สะดวกต่อการ .slice(0, N) เอา N รายการล่าสุด) จึงกลับลำดับตอนแสดงผล
@@ -1684,7 +1794,10 @@ export default function QueueDisplayPage() {
                       const chNoShow = shouldScroll ? chNoShowAll : chNoShowAll.slice(-config.vtNoShowMaxItems)
                       const noShowH = config.vtNoShowHeights[sp.id] || config.vtNoShowDefaultHeight
                       const renderNoShowItem = (item: CallEntry, keySuffix = '') => (
-                        <div className="qd-vt-ch-noshow-item" key={item.vn + keySuffix}>
+                        <div className="qd-vt-ch-noshow-item" key={item.vn + keySuffix} style={{
+                          background: config.vtNoShowItemBg,
+                          border: config.vtNoShowItemBorderWidth > 0 ? `${config.vtNoShowItemBorderWidth}px solid ${config.vtNoShowItemBorderColor}` : 'none'
+                        }}>
                           <span style={{ color: config.vtNoShowQueueColor, fontSize: `${config.vtNoShowFontSize}vw` }}>{item.queueNo}</span>
                           <span className="qd-vt-ch-noshow-time">{item.calledAt}</span>
                         </div>
@@ -1736,7 +1849,7 @@ export default function QueueDisplayPage() {
         {/* คิวที่รอเรียก — อยู่ทางขวาของคิวที่กำลังเรียก ก่อนถึงแผง "เรียกแล้วไม่มา" */}
         {config.vtShowWaiting && (
           <div className="qd-right qd-vt-waiting" style={{ background: config.vtWaitingBg, width: config.vtWaitingWidth, minWidth: config.vtWaitingWidth }}>
-            <div className="qd-right-hd" style={{ background: config.vtWaitingHeaderBg, color: config.vtWaitingHeaderColor }}>
+            <div className="qd-right-hd" style={{ background: config.vtWaitingHeaderBg, color: config.vtWaitingHeaderColor, fontSize: config.vtWaitingHeaderFontSize, height: config.vtWaitingHeaderHeight }}>
               {config.vtWaitingLabel}
               {waitingQueues.length > 0 && <span className="qd-right-count">{waitingQueues.length}</span>}
             </div>
@@ -1792,16 +1905,21 @@ export default function QueueDisplayPage() {
 
       {/* ─── HEADER ──────────────────────────────────────────── */}
       <header className="qd-header" style={{ background: config.headerBg, color: config.headerTextColor }}>
-        <span className="qd-title">
-          {config.title}
-          {config.displayStation && <span className="qd-station-tag">{config.displayStation}</span>}
-          {config.displayConfigId && (
-            <span className="qd-station-tag" style={{ background: 'rgba(0,188,212,0.3)', marginLeft: 8, fontSize: '0.85em', fontWeight: 700, letterSpacing: 0.5 }}>
+        <span className="qd-title" style={{ fontSize: config.titleFontSize, color: config.titleColor }}>
+          {config.displayConfigId ? (
+            <>
               📺 {config.displayConfigName || config.displayConfigId}
               {config.displayChannels.length > 0 && <span style={{ opacity: 0.7, fontWeight: 400, marginLeft: 5 }}>({config.displayChannels.length} ช่อง)</span>}
-            </span>
-          )}
+            </>
+          ) : config.title}
+          {config.displayStation && <span className="qd-station-tag">{config.displayStation}</span>}
         </span>
+        {/* ข้อความกำหนดเองได้ — แสดงตรงพื้นที่ว่างกึ่งกลางแถบหัว ระหว่างชื่อจอกับปุ่มควบคุม */}
+        {config.customMessageText && (
+          <div className="qd-header-custom-message" style={{ fontSize: `${config.customMessageFontSize}vw`, color: config.customMessageColor }}>
+            {config.customMessageText}
+          </div>
+        )}
         <div className="qd-controls">
           {config.showClock && (
             <span className="qd-clock" style={{ color: config.clockColor }}>
@@ -1977,18 +2095,56 @@ export default function QueueDisplayPage() {
                     onChange={e => setConfig(c => ({ ...c, vtCalledFontSize: Number(e.target.value) }))}
                     className="qd-slider" />
                 </SRow>
+                <SRow label={`ระยะห่างระหว่างคิวแต่ละใบ: ${config.vtCalledGap}px`} hint="ลากแถบ หรือพิมพ์ตัวเลขเองได้ไม่จำกัด">
+                  <div className="qd-slider-with-number">
+                    <input type="range" min="0" max="60" step="1" value={Math.min(config.vtCalledGap, 60)}
+                      onChange={e => setConfig(c => ({ ...c, vtCalledGap: Number(e.target.value) }))}
+                      className="qd-slider" />
+                    <input type="number" min="0" value={config.vtCalledGap}
+                      onChange={e => setConfig(c => ({ ...c, vtCalledGap: Math.max(0, Number(e.target.value) || 0) }))}
+                      className="input qd-slider-number" />
+                  </div>
+                </SRow>
                 <SRow label="จัดคิวที่เรียกไว้กึ่งกลางกล่อง" hint="ปิด = ชิดซ้ายบนตามลำดับที่เรียก (ค่าเริ่มต้น) | เปิด = จัดกลุ่มไว้กึ่งกลางกล่องเสมอ">
                   <Tog checked={config.vtCalledCenter} onChange={v => setConfig(c => ({ ...c, vtCalledCenter: v }))} />
                 </SRow>
-                <SRow label={`ขนาดตัวอักษรหัวข้อช่องรับยา: ${config.vtHeaderFontSize}px`}>
-                  <input type="range" min="8" max="32" step="1" value={config.vtHeaderFontSize}
-                    onChange={e => setConfig(c => ({ ...c, vtHeaderFontSize: Number(e.target.value) }))}
-                    className="qd-slider" />
+                <SRow label="ข้อความตอนยังไม่เรียกคิว" hint="ข้อความที่แสดงแทนในช่อง ก่อนมีการเรียกคิวครั้งแรก">
+                  <input type="text" value={config.vtEmptyDashText}
+                    onChange={e => setConfig(c => ({ ...c, vtEmptyDashText: e.target.value }))}
+                    className="input" />
                 </SRow>
-                <SRow label={`ความสูงหัวข้อช่องรับยา: ${config.vtHeaderHeight}px`}>
-                  <input type="range" min="18" max="100" step="2" value={config.vtHeaderHeight}
-                    onChange={e => setConfig(c => ({ ...c, vtHeaderHeight: Number(e.target.value) }))}
-                    className="qd-slider" />
+                <SRow label={`ขนาดตัวอักษรข้อความตอนยังไม่เรียกคิว: ${config.vtEmptyDashFontSize}vw`} hint="ลากแถบ หรือพิมพ์ตัวเลขเองได้ไม่จำกัด">
+                  <div className="qd-slider-with-number">
+                    <input type="range" min="1" max="24" step="0.5" value={Math.min(config.vtEmptyDashFontSize, 24)}
+                      onChange={e => setConfig(c => ({ ...c, vtEmptyDashFontSize: Number(e.target.value) }))}
+                      className="qd-slider" />
+                    <input type="number" min="0.5" step="0.5" value={config.vtEmptyDashFontSize}
+                      onChange={e => setConfig(c => ({ ...c, vtEmptyDashFontSize: Math.max(0.5, Number(e.target.value) || 0.5) }))}
+                      className="input qd-slider-number" />
+                  </div>
+                </SRow>
+                <SRow label="สีข้อความตอนยังไม่เรียกคิว">
+                  <CInput value={config.vtEmptyDashColor} onChange={v => setConfig(c => ({ ...c, vtEmptyDashColor: v }))} />
+                </SRow>
+                <SRow label={`ขนาดตัวอักษรหัวข้อช่องรับยา: ${config.vtHeaderFontSize}px`} hint="ลากแถบ หรือพิมพ์ตัวเลขเองได้ไม่จำกัด">
+                  <div className="qd-slider-with-number">
+                    <input type="range" min="8" max="120" step="1" value={Math.min(config.vtHeaderFontSize, 120)}
+                      onChange={e => setConfig(c => ({ ...c, vtHeaderFontSize: Number(e.target.value) }))}
+                      className="qd-slider" />
+                    <input type="number" min="1" value={config.vtHeaderFontSize}
+                      onChange={e => setConfig(c => ({ ...c, vtHeaderFontSize: Math.max(1, Number(e.target.value) || 1) }))}
+                      className="input qd-slider-number" />
+                  </div>
+                </SRow>
+                <SRow label={`ความสูงหัวข้อช่องรับยา: ${config.vtHeaderHeight}px`} hint="ลากแถบ หรือพิมพ์ตัวเลขเองได้ไม่จำกัด">
+                  <div className="qd-slider-with-number">
+                    <input type="range" min="18" max="400" step="2" value={Math.min(config.vtHeaderHeight, 400)}
+                      onChange={e => setConfig(c => ({ ...c, vtHeaderHeight: Number(e.target.value) }))}
+                      className="qd-slider" />
+                    <input type="number" min="1" value={config.vtHeaderHeight}
+                      onChange={e => setConfig(c => ({ ...c, vtHeaderHeight: Math.max(1, Number(e.target.value) || 1) }))}
+                      className="input qd-slider-number" />
+                  </div>
                 </SRow>
                 {config.numColumns > 1 && (
                   <>
@@ -2064,15 +2220,25 @@ export default function QueueDisplayPage() {
                 <SRow label="สีตัวอักษรหัวข้อ">
                   <CInput value={config.vtNoShowHeaderColor} onChange={v => setConfig(c => ({ ...c, vtNoShowHeaderColor: v }))} />
                 </SRow>
-                <SRow label={`ขนาดตัวอักษรหัวข้อ: ${config.vtNoShowHeaderFontSize}px`}>
-                  <input type="range" min="8" max="28" step="1" value={config.vtNoShowHeaderFontSize}
-                    onChange={e => setConfig(c => ({ ...c, vtNoShowHeaderFontSize: Number(e.target.value) }))}
-                    className="qd-slider" />
+                <SRow label={`ขนาดตัวอักษรหัวข้อ: ${config.vtNoShowHeaderFontSize}px`} hint="ลากแถบ หรือพิมพ์ตัวเลขเองได้ไม่จำกัด">
+                  <div className="qd-slider-with-number">
+                    <input type="range" min="8" max="120" step="1" value={Math.min(config.vtNoShowHeaderFontSize, 120)}
+                      onChange={e => setConfig(c => ({ ...c, vtNoShowHeaderFontSize: Number(e.target.value) }))}
+                      className="qd-slider" />
+                    <input type="number" min="1" value={config.vtNoShowHeaderFontSize}
+                      onChange={e => setConfig(c => ({ ...c, vtNoShowHeaderFontSize: Math.max(1, Number(e.target.value) || 1) }))}
+                      className="input qd-slider-number" />
+                  </div>
                 </SRow>
-                <SRow label={`ความสูงหัวข้อ: ${config.vtNoShowHeaderHeight}px`}>
-                  <input type="range" min="16" max="80" step="2" value={config.vtNoShowHeaderHeight}
-                    onChange={e => setConfig(c => ({ ...c, vtNoShowHeaderHeight: Number(e.target.value) }))}
-                    className="qd-slider" />
+                <SRow label={`ความสูงหัวข้อ: ${config.vtNoShowHeaderHeight}px`} hint="ลากแถบ หรือพิมพ์ตัวเลขเองได้ไม่จำกัด">
+                  <div className="qd-slider-with-number">
+                    <input type="range" min="16" max="400" step="2" value={Math.min(config.vtNoShowHeaderHeight, 400)}
+                      onChange={e => setConfig(c => ({ ...c, vtNoShowHeaderHeight: Number(e.target.value) }))}
+                      className="qd-slider" />
+                    <input type="number" min="1" value={config.vtNoShowHeaderHeight}
+                      onChange={e => setConfig(c => ({ ...c, vtNoShowHeaderHeight: Math.max(1, Number(e.target.value) || 1) }))}
+                      className="input qd-slider-number" />
+                  </div>
                 </SRow>
                 <SRow label="สีตัวเลขคิวไม่มา">
                   <CInput value={config.vtNoShowQueueColor} onChange={v => setConfig(c => ({ ...c, vtNoShowQueueColor: v }))} />
@@ -2080,6 +2246,17 @@ export default function QueueDisplayPage() {
                 <SRow label={`ขนาดตัวอักษรคิวไม่มา: ${config.vtNoShowFontSize}vw`}>
                   <input type="range" min="1" max="10" step="0.5" value={config.vtNoShowFontSize}
                     onChange={e => setConfig(c => ({ ...c, vtNoShowFontSize: Number(e.target.value) }))}
+                    className="qd-slider" />
+                </SRow>
+                <SRow label="สีพื้นหลังคิวแต่ละใบ" hint="พื้นหลังของกรอบคิวแต่ละใบ ให้แยกคิวออกจากกันเป็นสัดส่วน">
+                  <CInput value={config.vtNoShowItemBg} onChange={v => setConfig(c => ({ ...c, vtNoShowItemBg: v }))} />
+                </SRow>
+                <SRow label="สีขอบคิวแต่ละใบ">
+                  <CInput value={config.vtNoShowItemBorderColor} onChange={v => setConfig(c => ({ ...c, vtNoShowItemBorderColor: v }))} />
+                </SRow>
+                <SRow label={`ความหนาขอบคิวแต่ละใบ: ${config.vtNoShowItemBorderWidth}px`} hint="ตั้งเป็น 0 เพื่อไม่แสดงกรอบ">
+                  <input type="range" min="0" max="12" step="1" value={config.vtNoShowItemBorderWidth}
+                    onChange={e => setConfig(c => ({ ...c, vtNoShowItemBorderWidth: Number(e.target.value) }))}
                     className="qd-slider" />
                 </SRow>
                 <SRow label={`จำนวนคิวก่อนเลื่อน: ${config.vtNoShowMaxItems} รายการ`} hint={config.vtNoShowAutoScroll ? 'เกินจำนวนนี้จะเริ่มเลื่อนอัตโนมัติ (วนลูป)' : 'ปิดเลื่อนอัตโนมัติ: เกินจำนวนนี้จะตัดรายการเก่าทิ้ง แสดงแค่ล่าสุดตามจำนวนนี้'}>
@@ -2124,6 +2301,26 @@ export default function QueueDisplayPage() {
                   </SRow>
                   <SRow label="สีตัวอักษรหัวข้อ">
                     <CInput value={config.vtWaitingHeaderColor} onChange={v => setConfig(c => ({ ...c, vtWaitingHeaderColor: v }))} />
+                  </SRow>
+                  <SRow label={`ขนาดตัวอักษรหัวข้อ: ${config.vtWaitingHeaderFontSize}px`} hint="ลากแถบ หรือพิมพ์ตัวเลขเองได้ไม่จำกัด">
+                    <div className="qd-slider-with-number">
+                      <input type="range" min="8" max="120" step="1" value={Math.min(config.vtWaitingHeaderFontSize, 120)}
+                        onChange={e => setConfig(c => ({ ...c, vtWaitingHeaderFontSize: Number(e.target.value) }))}
+                        className="qd-slider" />
+                      <input type="number" min="1" value={config.vtWaitingHeaderFontSize}
+                        onChange={e => setConfig(c => ({ ...c, vtWaitingHeaderFontSize: Math.max(1, Number(e.target.value) || 1) }))}
+                        className="input qd-slider-number" />
+                    </div>
+                  </SRow>
+                  <SRow label={`ความสูงหัวข้อ: ${config.vtWaitingHeaderHeight}px`} hint="ลากแถบ หรือพิมพ์ตัวเลขเองได้ไม่จำกัด">
+                    <div className="qd-slider-with-number">
+                      <input type="range" min="16" max="400" step="2" value={Math.min(config.vtWaitingHeaderHeight, 400)}
+                        onChange={e => setConfig(c => ({ ...c, vtWaitingHeaderHeight: Number(e.target.value) }))}
+                        className="qd-slider" />
+                      <input type="number" min="1" value={config.vtWaitingHeaderHeight}
+                        onChange={e => setConfig(c => ({ ...c, vtWaitingHeaderHeight: Math.max(1, Number(e.target.value) || 1) }))}
+                        className="input qd-slider-number" />
+                    </div>
                   </SRow>
                   <SRow label="สีตัวเลขคิวที่รอเรียก">
                     <CInput value={config.vtWaitingQueueColor} onChange={v => setConfig(c => ({ ...c, vtWaitingQueueColor: v }))} />
@@ -2321,6 +2518,33 @@ export default function QueueDisplayPage() {
               <SRow label="เสียงแจ้งเตือน">
                 <Tog checked={config.soundEnabled} onChange={v => setConfig(c => ({ ...c, soundEnabled: v }))} />
               </SRow>
+              {URL_DISPLAY_ID ? (
+                <SRow label="ชื่อจอ" hint='แก้ที่นี่จะอัปเดตชื่อใน "จัดการหน้าจอแสดงคิว" ด้วย — บันทึกเมื่อออกจากช่อง'>
+                  <input type="text" value={config.displayConfigName}
+                    onChange={e => setConfig(c => ({ ...c, displayConfigName: e.target.value }))}
+                    onBlur={e => renameDisplay(e.target.value)}
+                    className="input" />
+                </SRow>
+              ) : (
+                <SRow label="ชื่อระบบ (ชื่อนี้ใช้เมื่อยังไม่ได้เลือกจอเฉพาะ)">
+                  <input type="text" value={config.title}
+                    onChange={e => setConfig(c => ({ ...c, title: e.target.value }))}
+                    className="input" />
+                </SRow>
+              )}
+              <SRow label={`ขนาดตัวอักษรชื่อจอ: ${config.titleFontSize}px`} hint="ลากแถบ หรือพิมพ์ตัวเลขเองได้ไม่จำกัด">
+                <div className="qd-slider-with-number">
+                  <input type="range" min="10" max="60" step="1" value={Math.min(config.titleFontSize, 60)}
+                    onChange={e => setConfig(c => ({ ...c, titleFontSize: Number(e.target.value) }))}
+                    className="qd-slider" />
+                  <input type="number" min="1" value={config.titleFontSize}
+                    onChange={e => setConfig(c => ({ ...c, titleFontSize: Math.max(1, Number(e.target.value) || 1) }))}
+                    className="input qd-slider-number" />
+                </div>
+              </SRow>
+              <SRow label="สีตัวอักษรชื่อจอ">
+                <CInput value={config.titleColor} onChange={v => setConfig(c => ({ ...c, titleColor: v }))} />
+              </SRow>
 
               {/* ── ตาราง ── */}
               <SSec>ตาราง (หัวคอลัมน์และสี)</SSec>
@@ -2417,7 +2641,11 @@ export default function QueueDisplayPage() {
                 baseSPs.map(sp => {
                   const isVisible = !config.hiddenSPs.includes(sp.id) && !config.hiddenSPs.includes(sp.name)
                   const displayName = config.spDisplayNames[sp.id] || ''
-                  const colVal = config.spColumns[sp.id] ?? config.spColumns[sp.name] ?? 1
+                  // clamp ให้ตรงกับค่าที่ใช้จริงตอนจัดกลุ่มคอลัมน์ (columnGroups) เสมอ — ถ้าเคยตั้งไว้ตอนมีคอลัมน์
+                  // เยอะกว่านี้ แล้วลดจำนวนคอลัมน์ลงภายหลัง ค่าที่ค้างอยู่ (เช่น 3) จะเกินช่วงตัวเลือกปัจจุบัน
+                  // (มีแค่ 1-2) ทำให้ <select> โชว์ตัวเลือกแรกแบบหลอกตา ทั้งที่จริงเอาไปจัดกลุ่มที่คอลัมน์สุดท้าย
+                  const colValRaw = config.spColumns[sp.id] ?? config.spColumns[sp.name] ?? 1
+                  const colVal = Math.min(Math.max(colValRaw, 1), config.numColumns)
                   const rowVal = config.spRows[sp.id] ?? config.spRows[sp.name] ?? 1
                   return (
                     <div key={sp.id} className="qd-sp-row">
@@ -2798,6 +3026,27 @@ export default function QueueDisplayPage() {
                   </div>
                 )}
               </>}
+
+              {/* ── ข้อความกำหนดเองได้ ลอยกึ่งกลางจอ ── */}
+              <SSec>ข้อความกำหนดเอง (ลอยกึ่งกลางจอ)</SSec>
+              <SRow label="ข้อความ" hint="เว้นว่าง = ไม่แสดง">
+                <input type="text" value={config.customMessageText}
+                  onChange={e => setConfig(c => ({ ...c, customMessageText: e.target.value }))}
+                  className="input" />
+              </SRow>
+              <SRow label={`ขนาดตัวอักษร: ${config.customMessageFontSize}vw`} hint="ลากแถบ หรือพิมพ์ตัวเลขเองได้ไม่จำกัด">
+                <div className="qd-slider-with-number">
+                  <input type="range" min="1" max="30" step="0.5" value={Math.min(config.customMessageFontSize, 30)}
+                    onChange={e => setConfig(c => ({ ...c, customMessageFontSize: Number(e.target.value) }))}
+                    className="qd-slider" />
+                  <input type="number" min="0.5" step="0.5" value={config.customMessageFontSize}
+                    onChange={e => setConfig(c => ({ ...c, customMessageFontSize: Math.max(0.5, Number(e.target.value) || 0.5) }))}
+                    className="input qd-slider-number" />
+                </div>
+              </SRow>
+              <SRow label="สีตัวอักษร">
+                <CInput value={config.customMessageColor} onChange={v => setConfig(c => ({ ...c, customMessageColor: v }))} />
+              </SRow>
 
               {/* ── ประกาศด้านล่าง (Footer) ── */}
               <SSec>ประกาศด้านล่าง (Footer)</SSec>

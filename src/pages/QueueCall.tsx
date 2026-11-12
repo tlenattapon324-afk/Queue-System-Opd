@@ -3,6 +3,7 @@ import { useNavigate } from 'react-router-dom'
 import {
   getQueueList, callQueue, onQueueCalled, updateQueueStatus,
   getServicePoints, getDisplayConfigs, getDisplayQDConfig, clearDisplayQueues, getCallsToday, prewarmTTS, getLabXray, getAppointmentDoctors, type LabXrayStatus,
+  syncDisplayFilter,
   getQueueStaging, moveQueuesToStaging, type QueueStagingMap,
   getPriorityList, getPrioritySettings, savePrioritySettings, type PriorityItem
 } from '../lib/api'
@@ -373,6 +374,13 @@ export default function QueueCallPage() {
   useEffect(() => {
     try { localStorage.setItem('qc_mode', mode) } catch {}
   }, [mode])
+
+  // รายงานโหมด+ห้องตรวจที่กำลังกรองอยู่ ให้จอแสดงคิว (เลย์เอาต์แนวตั้ง) ของจอที่เลือกไว้ใช้แสดง
+  // "คิวที่รอเรียก" ให้ตรงกับที่กรองอยู่จริงที่หน้านี้ — ไม่ส่งถ้ายังไม่ได้เลือกจอ
+  useEffect(() => {
+    if (!selectedDisplayId) return
+    syncDisplayFilter(selectedDisplayId, mode, filterDepts)
+  }, [selectedDisplayId, mode, filterDepts])
 
   useEffect(() => {
     try { localStorage.setItem('qc_visit_filter', visitFilter) } catch {}

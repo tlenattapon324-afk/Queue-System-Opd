@@ -14,6 +14,17 @@
   background: #e8e8e8;
 }
 
+/* ─── ข้อความกำหนดเองได้ — อยู่กึ่งกลางแถบหัว (ช่องว่างระหว่างชื่อจอกับปุ่มควบคุม) ── */
+.qd-header-custom-message {
+  flex: 1;
+  min-width: 0;
+  text-align: center;
+  font-weight: 900;
+  white-space: nowrap;
+  overflow: hidden;
+  text-overflow: ellipsis;
+}
+
 /* ─── Header ─────────────────────────────────────────────────── */
 .qd-header {
   display: flex;
@@ -544,7 +555,8 @@
   flex-direction: column;
   align-items: center;
   gap: 2px;
-  padding: 2px 6px;
+  padding: 4px 10px;
+  border-radius: 8px;
 }
 
 /* เลื่อนอัตโนมัติแนวนอนเมื่อรายการเกินจำนวนที่ตั้งไว้ — render ชุดเดียวกันซ้ำ 2 ชุดต่อกัน แล้วเลื่อน
@@ -965,9 +977,9 @@
 .qd-panel-body > .qd-section-label { margin-bottom: 4px; }
 
 .qd-section-label {
-  font-size: 11px;
-  font-weight: 700;
-  color: rgba(255,255,255,0.4);
+  font-size: 13px;
+  font-weight: 900;
+  color: #4fc3f7;
   text-transform: uppercase;
   letter-spacing: 1px;
   padding: 10px 0 2px;
@@ -1231,6 +1243,19 @@
 }
 
 /* Slider */
+.qd-slider-with-number {
+  display: flex;
+  align-items: center;
+  gap: 8px;
+  flex: 1;
+  min-width: 0;
+}
+.qd-slider-number {
+  width: 64px;
+  flex-shrink: 0;
+  font-size: 12px !important;
+  padding: 6px 8px !important;
+}
 .qd-slider {
   flex: 1;
   -webkit-appearance: none;

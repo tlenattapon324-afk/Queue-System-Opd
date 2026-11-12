@@ -40,13 +40,15 @@ const _configListeners: Set<(config: unknown) => void> = new Set()
 const _statusListeners: Set<(data: { vn: string; status: string; queueNo?: string; servicePoint?: string }) => void> = new Set()
 const _audioListeners: Set<(data: { audioUrl: string; displayConfigId?: string | null; servicePoint?: string; queueNo?: string; repeat?: boolean }) => void> = new Set()
 const _clearListeners: Set<(data: { displayConfigId: string | null }) => void> = new Set()
+const _filterSyncListeners: Set<(data: { displayConfigId: string | null; mode: string | null; filterDepts: string[] }) => void> = new Set()
 
 let _wsReconnectTimer: ReturnType<typeof setTimeout> | null = null
 let _wsPingInterval: ReturnType<typeof setInterval> | null = null
 
 function hasActiveListeners() {
   return _wsListeners.size > 0 || _audioListeners.size > 0 ||
-    _configListeners.size > 0 || _statusListeners.size > 0 || _clearListeners.size > 0
+    _configListeners.size > 0 || _statusListeners.size > 0 || _clearListeners.size > 0 ||
+    _filterSyncListeners.size > 0
 }
 
 function getWS(): WebSocket {
@@ -75,6 +77,8 @@ function getWS(): WebSocket {
         _statusListeners.forEach(cb => cb(msg.data))
       } else if (msg.type === 'queue:clear') {
         _clearListeners.forEach(cb => cb(msg.data))
+      } else if (msg.type === 'queue:filterSync') {
+        _filterSyncListeners.forEach(cb => cb(msg.data))
       }
     } catch {}
   }
@@ -352,6 +356,23 @@ export function onQueueClear(
   if (typeof window !== 'undefined') getWS()
   _clearListeners.add(cb)
   return () => _clearListeners.delete(cb)
+}
+
+export async function syncDisplayFilter(displayConfigId: string, mode: string, filterDepts: string[]): Promise<void> {
+  try {
+    await fetchJSON('/display/filter-sync', {
+      method: 'POST',
+      body: JSON.stringify({ displayConfigId, mode, filterDepts })
+    })
+  } catch {}
+}
+
+export function onQueueFilterSync(
+  cb: (data: { displayConfigId: string | null; mode: string | null; filterDepts: string[] }) => void
+): () => void {
+  if (typeof window !== 'undefined') getWS()
+  _filterSyncListeners.add(cb)
+  return () => _filterSyncListeners.delete(cb)
 }
 
 export function onQueueStatusChanged(
