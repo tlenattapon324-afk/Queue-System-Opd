@@ -571,6 +571,7 @@ export default function QueueDisplayPage() {
   const blinkTimers = useRef<Record<string, ReturnType<typeof setTimeout>>>({})
   const servicePointsRef = useRef<ServicePoint[]>([])
   const [audioUnlocked, setAudioUnlocked] = useState(false)
+  const [isFullscreen, setIsFullscreen] = useState(false)
 
   const audioCtx = useRef<AudioContext | null>(null)
   // Display update buffered from queue:called — applied just before audio plays (sync display+audio).
@@ -742,6 +743,21 @@ export default function QueueDisplayPage() {
       clearInterval(interval)
     }
   }, [])
+
+  // Track real fullscreen state (also changes if user exits via Esc/F11 outside our button)
+  useEffect(() => {
+    const onFsChange = () => setIsFullscreen(!!document.fullscreenElement)
+    document.addEventListener('fullscreenchange', onFsChange)
+    return () => document.removeEventListener('fullscreenchange', onFsChange)
+  }, [])
+
+  const toggleFullscreen = () => {
+    if (document.fullscreenElement) {
+      document.exitFullscreen().catch(() => {})
+    } else {
+      document.documentElement.requestFullscreen().catch(() => {})
+    }
+  }
 
   // Clock tick
   useEffect(() => {
@@ -1962,6 +1978,13 @@ export default function QueueDisplayPage() {
             style={{ background: config.showNoShowPanel ? 'rgba(239,83,80,0.25)' : 'rgba(255,255,255,0.1)' }}
           >
             {config.showNoShowPanel ? '🔴' : '⚫'} ไม่มา
+          </button>
+          <button
+            className="qd-hdr-btn"
+            onClick={toggleFullscreen}
+            title={isFullscreen ? 'ออกจากเต็มจอ' : 'แสดงเต็มจอ'}
+          >
+            {isFullscreen ? '⛶ ออกเต็มจอ' : '⛶ เต็มจอ'}
           </button>
           <button className="qd-hdr-btn" onClick={openSettings}>⚙ ตั้งค่าหน้าจอ</button>
         </div>
