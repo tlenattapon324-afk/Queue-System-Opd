@@ -717,12 +717,30 @@ export default function QueueDisplayPage() {
     getServicePoints().then(sps => { setServicePoints(sps); servicePointsRef.current = sps })
   }, [])
 
-  // Detect autoplay capability — browsers block audio until user interacts with the page
+  // Detect autoplay capability — browsers block audio until user interacts with the page.
+  // No unlock-prompt overlay is shown (the display must never be blocked on refresh), so keep
+  // silently retrying in the background in case the browser's autoplay policy allows it later
+  // (e.g. media-engagement score builds up) or an incidental real tap/click unlocks it.
   useEffect(() => {
-    const el = new Audio()
-    el.muted = true
-    el.src = 'data:audio/wav;base64,UklGRiQAAABXQVZFZm10IBAAAAABAAEAESsAACJWAAACABAAZGF0YQAAAAA='
-    el.play().then(() => { el.pause(); setAudioUnlocked(true) }).catch(() => setAudioUnlocked(false))
+    let cancelled = false
+    const tryUnlock = () => {
+      if (cancelled) return
+      const el = new Audio()
+      el.muted = true
+      el.src = 'data:audio/wav;base64,UklGRiQAAABXQVZFZm10IBAAAAABAAEAESsAACJWAAACABAAZGF0YQAAAAA='
+      el.play().then(() => { el.pause(); if (!cancelled) setAudioUnlocked(true) }).catch(() => {})
+    }
+    tryUnlock()
+    const onUserGesture = () => tryUnlock()
+    window.addEventListener('pointerdown', onUserGesture)
+    window.addEventListener('keydown', onUserGesture)
+    const interval = setInterval(tryUnlock, 10000)
+    return () => {
+      cancelled = true
+      window.removeEventListener('pointerdown', onUserGesture)
+      window.removeEventListener('keydown', onUserGesture)
+      clearInterval(interval)
+    }
   }, [])
 
   // Clock tick
@@ -3118,25 +3136,6 @@ export default function QueueDisplayPage() {
               <button className="btn btn-ghost" onClick={() => setShowNamePwdDialog(false)}>ยกเลิก</button>
               <button className="btn btn-primary" onClick={confirmNamePwd}>ยืนยัน</button>
             </div>
-          </div>
-        </div>
-      )}
-
-      {/* ─── AUDIO UNLOCK OVERLAY ─────────────────────────────── */}
-      {audioUnlocked === false && !(typeof window !== 'undefined' && (window as any).electronAPI) && (
-        <div
-          style={{ position: 'fixed', inset: 0, zIndex: 9999, display: 'flex', alignItems: 'center', justifyContent: 'center', background: 'rgba(0,0,0,0.75)', cursor: 'pointer' }}
-          onClick={() => {
-            const el = new Audio()
-            el.muted = true
-            el.src = 'data:audio/wav;base64,UklGRiQAAABXQVZFZm10IBAAAAABAAEAESsAACJWAAACABAAZGF0YQAAAAA='
-            el.play().catch(() => {}).finally(() => { el.pause(); setAudioUnlocked(true) })
-          }}
-        >
-          <div style={{ background: '#1a2a4a', border: '2px solid #00bcd4', borderRadius: 16, padding: '40px 60px', textAlign: 'center', color: '#fff' }}>
-            <div style={{ fontSize: '3rem', marginBottom: 12 }}>🔊</div>
-            <div style={{ fontSize: '1.4rem', fontWeight: 700, marginBottom: 8 }}>แตะเพื่อเปิดเสียง</div>
-            <div style={{ fontSize: '0.9rem', opacity: 0.7 }}>Tap to enable audio</div>
           </div>
         </div>
       )}
